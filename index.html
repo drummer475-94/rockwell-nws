@@ -175,6 +175,14 @@
     </section>
 
     <section class="card">
+      <h2 style="margin:6px 4px 12px">Lake levels</h2>
+      <div id="lakes" class="list"></div>
+      <div class="footnote attribution" style="margin-top:8px">
+        <span>Sources: USGS NWIS, NOAA NWPS, Cube Carolinas</span>
+      </div>
+    </section>
+
+    <section class="card">
       <h2 style="margin:6px 4px 12px">Hourly (next 12 hours)</h2>
       <div id="hourly" class="hourlyScroller loading"></div>
     </section>
@@ -194,13 +202,14 @@
     const LAT = 35.551;   // Rockwell, NC approx
     const LON = -80.407;
 
-    // --- Map (Leaflet + RainViewer latest nowcast layer) ---
+    // --- Map (Leaflet + OSM base) ---
     const map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
       attribution: 'Map data © OpenStreetMap contributors'
     }).addTo(map);
 
+    // Static fallback radar (NEXRAD via Iowa State Mesonet)
     const radarLayer = L.tileLayer(
       'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
       { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
@@ -212,7 +221,7 @@
       fillColor: '#38bdf8',
       fillOpacity: 0.95,
       weight: 2
-    }) .addTo(map).bindPopup('Rockwell, NC');
+    }).addTo(map).bindPopup('Rockwell, NC');
 
     // --- RainViewer animated radar (past hour + slider) ---
     let rainFrames = [];
@@ -374,7 +383,8 @@
 
       // Chance of rain next 6h (max of next 6 hourly pops)
       const next6 = (hourly?.properties?.periods || []).slice(0, 6);
-      const maxPop = Math.max(...next6.map(p => popVal(p.probabilityOfPrecipitation)).filter(v => typeof v === 'number'));
+      const pops = next6.map(p => popVal(p.probabilityOfPrecipitation)).filter(v => typeof v === 'number');
+      const maxPop = pops.length ? Math.max(...pops) : NaN;
       $('pop6').textContent = isFinite(maxPop) ? `${Math.round(maxPop)}%` : '—';
 
       $('lastUpdated').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
@@ -436,11 +446,105 @@
       cont.classList.remove('loading');
     }
 
+    // --- Lake Levels (High Rock & Tuckertown) ---
+    const USGS_HIGHROCK_SITE = '02122500';
+    const USGS_HIGHROCK_DATUM_FT = 558.68; // NGVD29 (USGS inventory)
+    const FULL_POND = { highrock: 655, tuckertown: 596 };
+
+    async function fetchHighRockFromUSGS(){
+      try {
+        const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&siteStatus=all`;
+        const data = await fetch(url).then(r => r.json());
+        const ts = data?.value?.timeSeries?.[0];
+        const arr = ts?.values?.[0]?.value || [];
+        const last = arr[arr.length - 1];
+        const gageFt = parseFloat(last?.value);
+        const when = last?.dateTime;
+        if (isFinite(gageFt)) {
+          return { value: +(USGS_HIGHROCK_DATUM_FT + gageFt).toFixed(2), when, src: 'USGS' };
+        }
+      } catch(err){ console.warn('USGS fetch failed', err); }
+      return null;
+    }
+
+    async function fetchFromCube(){
+      // Uses a read-only text proxy to avoid CORS issues
+      try {
+        const html = await fetch('https://r.jina.ai/http://cubecarolinas.com/lake-levels/').then(r => r.text());
+        const get = (name) => {
+          const re = new RegExp(name + "[^0-9]*([0-9]{3}\\.[0-9]{2})", 'i');
+          const m = html.match(re);
+          return m ? parseFloat(m[1]) : null;
+        };
+        const hr = get('High Rock');
+        const tt = get('Tuckertown');
+        const now = new Date().toISOString();
+        return { highrock: hr != null ? { value: +hr.toFixed(2), when: now, src: 'Cube Carolinas' } : null,
+                 tuckertown: tt != null ? { value: +tt.toFixed(2), when: now, src: 'Cube Carolinas' } : null };
+      } catch(err){ console.warn('Cube levels fetch failed', err); }
+      return { highrock: null, tuckertown: null };
+    }
+
+    async function fetchHighRockFromNOAA(){
+      try {
+        const text = await fetch('https://r.jina.ai/http://water.noaa.gov/gauges/hgrn7').then(r => r.text());
+        const m = text.match(/Pool \(FT\)[^0-9]*([0-9]{3}\.[0-9]+)/i);
+        if (m) return { value: +parseFloat(m[1]).toFixed(2), when: new Date().toISOString(), src: 'NOAA NWPS' };
+      } catch(err){ console.warn('NOAA NWPS fetch failed', err); }
+      return null;
+    }
+
+    function renderLakeLevels(vals){
+      const cont = $('lakes');
+      if (!cont) return;
+      cont.innerHTML = '';
+      const addRow = (label, item, full) => {
+        const div = document.createElement('div');
+        div.className = 'dayCard';
+        let valueText = '—';
+        let sub = '';
+        if (item && isFinite(item.value)) {
+          const diff = (full != null) ? +(full - item.value).toFixed(2) : null;
+          const dir = diff != null ? (diff >= 0 ? 'below' : 'above') : '';
+          const mag = diff != null ? Math.abs(diff).toFixed(2) : '';
+          valueText = `${item.value.toFixed(2)} ft`;
+          sub = (diff != null) ? `${mag} ft ${dir} full (${full} ft)` : '';
+        }
+        div.innerHTML = `
+          <div class="top">
+            <div>
+              <div style="font-weight:800">${label}</div>
+              <div class="muted">${sub || ''}</div>
+            </div>
+            <div class="temp">${valueText}</div>
+          </div>
+          <div class="footnote">${item?.src ? 'Source: ' + item.src : ''}</div>
+        `;
+        cont.appendChild(div);
+      };
+      addRow('High Rock Lake', vals.highrock, FULL_POND.highrock);
+      addRow('Tuckertown Lake', vals.tuckertown, FULL_POND.tuckertown);
+    }
+
+    async function loadLakeLevels(){
+      const vals = { highrock: null, tuckertown: null };
+      // Try operator site first for both
+      const cube = await fetchFromCube();
+      if (cube.highrock) vals.highrock = cube.highrock;
+      if (cube.tuckertown) vals.tuckertown = cube.tuckertown;
+      // High Rock fallbacks
+      if (!vals.highrock) vals.highrock = await fetchHighRockFromUSGS();
+      if (!vals.highrock) vals.highrock = await fetchHighRockFromNOAA();
+      renderLakeLevels(vals);
+    }
+
+    // Refresh button
     $('refreshBtn').addEventListener('click', () => {
       loadForecast().catch(err => {
         console.error(err);
         $('lastUpdated').textContent = 'Refresh failed. Try again.';
       });
+      loadLakeLevels().catch(console.error);
     });
 
     // Initial load
@@ -448,6 +552,7 @@
       console.error(err);
       $('lastUpdated').textContent = 'Failed to load data.';
     });
+    loadLakeLevels().catch(console.error);
   </script>
 </body>
 </html>
