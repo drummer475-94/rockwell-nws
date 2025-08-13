@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0ea5e9" />
-  <title>Rockwell, NC • NWS Forecast</title>
+  <title>Rockwell, NC • NWS Forecast (v2)</title>
   <!-- Leaflet (map) -->
   <link
     rel="stylesheet"
@@ -19,11 +19,11 @@
   ></script>
   <style>
     :root {
-      --bg: #0b1220;               /* dark mode default */
+      --bg: #0b1220;              /* dark mode default */
       --card: #0f172a;
       --muted: #94a3b8;
       --text: #e2e8f0;
-      --accent: #38bdf8;           /* sky-400 */
+      --accent: #38bdf8;          /* sky-400 */
       --accent-strong: #0ea5e9;    /* sky-500 */
       --ok: #22c55e;
       --warn: #f59e0b;
@@ -90,7 +90,7 @@
       border: 1px solid color-mix(in oklab, var(--muted) 20%, transparent);
     }
 
-    #radar { height: 360px; border-radius: 14px; overflow: hidden; }
+    #radar { height: 380px; border-radius: 14px; overflow: hidden; }
 
     .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
     .row.center { justify-content: center; }
@@ -125,6 +125,20 @@
 
     .attribution { font-size: 11px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .attribution span { white-space: nowrap; }
+
+    /* HR Lake stats */
+    .hrGrid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 800px){ .hrGrid { grid-template-columns: 1.2fr .8fr; } }
+    .sparklineWrap { background: color-mix(in oklab, var(--card) 96%, black); border: 1px solid color-mix(in oklab, var(--muted) 25%, transparent); border-radius: 14px; padding: 12px; }
+    .sparklineHead { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+    .legend { display:flex; gap:10px; align-items:center }
+    .legItem { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted) }
+    .swatch { width: 18px; height: 3px; border-radius: 2px; background: var(--accent); display:inline-block }
+    .swatch.median { background: #22c55e }
+    .swatch.full { background: #eab308 }
+
+    .radarControls .label { font-size: 12px; color: var(--muted);}
+    .range { width: 160px; }
   </style>
 </head>
 <body>
@@ -146,17 +160,47 @@
       <div class="card">
         <h2 style="margin:6px 4px 10px">Radar</h2>
         <div id="radar" aria-label="Radar map for Rockwell, NC"></div>
-        <div id="radarControls" class="row center" style="margin-top:10px; gap:10px">
+        <div id="radarControls" class="row radarControls" style="margin-top:10px; gap:10px">
+          <div class="row" style="gap:8px">
+            <span class="label">Mode</span>
+            <button data-mode="auto" class="btn sm" id="modeAuto">Auto</button>
+            <button data-mode="animated" class="btn sm" id="modeAnim">Animated</button>
+            <button data-mode="static" class="btn sm" id="modeStatic">Static</button>
+            <button data-mode="off" class="btn sm" id="modeOff">Off</button>
+          </div>
+          <div style="flex:1"></div>
+          <div class="row" style="gap:10px">
+            <label class="label" for="frameSlider">Frame</label>
+            <input id="frameSlider" class="range" type="range" min="0" max="0" value="0" aria-label="Radar time slider" />
+            <span id="frameTime" class="muted">—</span>
+          </div>
+        </div>
+        <div class="row" style="gap:14px; margin-top:8px">
+          <div class="row" style="gap:8px">
+            <span class="label">Max frames</span>
+            <input id="maxFrames" class="range" type="range" min="6" max="60" value="24" />
+            <span id="maxFramesLbl" class="muted">24</span>
+          </div>
+          <div class="row" style="gap:8px">
+            <span class="label">Speed</span>
+            <input id="speedSlider" class="range" type="range" min="120" max="800" step="20" value="450" />
+            <span id="speedLbl" class="muted">450 ms</span>
+          </div>
+          <div class="row" style="gap:8px">
+            <span class="label">Opacity</span>
+            <input id="opacitySlider" class="range" type="range" min="20" max="100" value="60" />
+            <span id="opacityLbl" class="muted">0.60</span>
+          </div>
           <button id="playBtn" class="btn" aria-label="Play/Pause radar animation">Play</button>
-          <input id="frameSlider" type="range" min="0" max="0" value="0" style="flex:1; min-width:160px" aria-label="Radar time slider" />
-          <span id="frameTime" class="muted">—</span>
         </div>
         <div class="footnote attribution" style="margin-top:8px">
-          <span>Radar tiles: RainViewer (animated)</span>
+          <span>Animated tiles: RainViewer</span>
           <span>•</span>
-          <span>Fallback: NEXRAD (Iowa State Mesonet)</span>
+          <span>Static fallback: NEXRAD (Iowa State Mesonet)</span>
           <span>•</span>
           <span>Map © OpenStreetMap</span>
+          <span>•</span>
+          <span id="radarDiag" class="muted"></span>
         </div>
       </div>
       <div class="card">
@@ -179,6 +223,47 @@
       <div id="lakes" class="list"></div>
       <div class="footnote attribution" style="margin-top:8px">
         <span>Sources: USGS NWIS, NOAA NWPS, Cube Carolinas</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:6px 4px 12px">High Rock Lake — detailed stats</h2>
+      <div class="hrGrid">
+        <div>
+          <div class="kpis" style="margin-bottom:12px">
+            <div class="kpi"><div class="label">Current Elevation</div><div id="hrNow" class="value">—</div></div>
+            <div class="kpi"><div class="label">vs Full Pond (655.00)</div><div id="hrVsFull" class="value">—</div></div>
+            <div class="kpi"><div class="label">Change (24h)</div><div id="hrCh24" class="value">—</div></div>
+            <div class="kpi"><div class="label">Change (7d)</div><div id="hrCh7" class="value">—</div></div>
+          </div>
+          <div class="sparklineWrap">
+            <div class="sparklineHead">
+              <div class="legend">
+                <div class="legItem"><span class="swatch"></span><span>Last 30 days</span></div>
+                <div class="legItem"><span class="swatch median"></span><span>Median (today)</span></div>
+                <div class="legItem"><span class="swatch full"></span><span>Full pond</span></div>
+              </div>
+              <div class="muted" id="hrRange">—</div>
+            </div>
+            <svg id="hrSpark" viewBox="0 0 600 150" width="100%" height="150" aria-label="High Rock Lake 30-day sparkline"></svg>
+          </div>
+          <div class="row" style="margin-top:10px; gap:10px">
+            <button id="dlCsv" class="btn">Download 30‑day CSV</button>
+            <div class="footnote" id="hrMeta">Data: USGS NWIS gage 02122500 (gage height + datum 558.68 = pool ft)</div>
+          </div>
+        </div>
+        <div class="list">
+          <div class="dayCard">
+            <div class="top"><div><div style="font-weight:800">Today vs historical</div><div class="muted">Based on USGS daily stats (period of record)</div></div></div>
+            <div style="margin-top:10px; display:grid; grid-template-columns: 1fr; gap:8px">
+              <div><span class="muted">Median today:</span> <strong id="hrMed">—</strong></div>
+              <div><span class="muted">Mean today:</span> <strong id="hrMean">—</strong></div>
+              <div><span class="muted">Percentile rank:</span> <strong id="hrPctile">—</strong></div>
+              <div><span class="muted">30‑day min / max / mean:</span> <strong id="hrMinMax">—</strong></div>
+              <div><span class="muted">Same date last year:</span> <strong id="hrLastYear">—</strong></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -210,7 +295,7 @@
     }).addTo(map);
 
     // Static fallback radar (NEXRAD via Iowa State Mesonet)
-    const radarLayer = L.tileLayer(
+    let radarLayer = L.tileLayer(
       'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
       { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
     ).addTo(map);
@@ -223,15 +308,37 @@
       weight: 2
     }).addTo(map).bindPopup('Rockwell, NC');
 
-    // --- RainViewer animated radar (past hour + slider) ---
+    // --- RainViewer animated radar (frames + controls) ---
     let rainFrames = [];
     let rainLayer = null;
     let frameIndex = 0;
     let animTimer = null;
     let isPlaying = false;
+    let currentMode = 'auto'; // auto | animated | static | off
+
+    // Heuristic performance cap for frames
+    const DEVICE_MEM = navigator.deviceMemory || 4;
+    const IS_MOBILE = /Mobi|Android/i.test(navigator.userAgent);
+    const RECOMMENDED_MAX_FRAMES = Math.min(60, IS_MOBILE ? 24 : (DEVICE_MEM >= 8 ? 48 : DEVICE_MEM >= 4 ? 36 : 24));
+    let MAX_FRAMES = RECOMMENDED_MAX_FRAMES;
+    let FRAME_INTERVAL = 450; // ms
+    let LAYER_OPACITY = 0.6;
 
     function rvFrameUrl(t){
       return `https://tilecache.rainviewer.com/v2/radar/${t}/256/{z}/{x}/{y}/2/1_1.png`;
+    }
+
+    function ensureRainLayer(){
+      if (!rainLayer) {
+        rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0), { opacity: LAYER_OPACITY, zIndex: 550 });
+      }
+      return rainLayer;
+    }
+
+    function setRadarOpacity(v){
+      LAYER_OPACITY = v;
+      if (radarLayer) radarLayer.setOpacity(v);
+      if (rainLayer) rainLayer.setOpacity(v);
     }
 
     function showFrame(i){
@@ -241,8 +348,8 @@
       if (rainLayer) {
         rainLayer.setUrl(rvFrameUrl(t));
       } else {
-        rainLayer = L.tileLayer(rvFrameUrl(t), { opacity: 0.6, zIndex: 550 });
-        rainLayer.addTo(map);
+        rainLayer = L.tileLayer(rvFrameUrl(t), { opacity: LAYER_OPACITY, zIndex: 550 });
+        if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
       }
       const slider = document.getElementById('frameSlider');
       const label = document.getElementById('frameTime');
@@ -253,7 +360,7 @@
     function play(){
       if (animTimer || !rainFrames.length) return;
       isPlaying = true; updatePlayBtn();
-      animTimer = setInterval(() => showFrame(frameIndex + 1), 450);
+      animTimer = setInterval(() => showFrame(frameIndex + 1), FRAME_INTERVAL);
     }
     function pause(){
       isPlaying = false; updatePlayBtn();
@@ -262,6 +369,27 @@
     function updatePlayBtn(){
       const btn = document.getElementById('playBtn');
       if (btn) btn.textContent = isPlaying ? 'Pause' : 'Play';
+    }
+
+    function setMode(mode){
+      currentMode = mode;
+      // Remove/add layers per mode
+      if (mode === 'off') {
+        if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
+        if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+        document.getElementById('radarDiag').textContent = 'Radar off';
+        return;
+      }
+      if (mode === 'static') {
+        if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+        if (radarLayer && !map.hasLayer(radarLayer)) radarLayer.addTo(map);
+        document.getElementById('radarDiag').textContent = 'Static NEXRAD tiles';
+        return;
+      }
+      // animated or auto -> prefer RainViewer frames if available
+      if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
+      if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
+      document.getElementById('radarDiag').textContent = `Animated RainViewer • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
     }
 
     async function initRadarAnimation(){
@@ -274,35 +402,37 @@
           const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
           frames = past.concat(nowc).map(f => f.time).filter(Boolean);
         } else if (Array.isArray(data)) {
-          // Older API shape: array of timestamps
-          frames = data;
+          frames = data; // older API shape
         }
-        const nowSec = Math.floor(Date.now()/1000);
-        // Keep only past ~60 minutes; if too few, fallback to last 12 frames
-        let filtered = frames.filter(t => (nowSec - t) >= 0 && (nowSec - t) <= 3600);
-        if (filtered.length < 3) filtered = frames.slice(-12);
-        rainFrames = filtered;
+        // Keep only the most recent MAX_FRAMES frames (past+nowcast)
+        rainFrames = frames.slice(-MAX_FRAMES);
 
         const slider = document.getElementById('frameSlider');
         if (rainFrames.length && slider) {
           slider.max = String(rainFrames.length - 1);
           showFrame(rainFrames.length - 1);
-          // Prefer animated layer; remove static fallback to avoid double overlay
-          if (typeof radarLayer !== 'undefined' && map.hasLayer(radarLayer)) {
+          // Prefer animated layer by default in auto mode
+          setMode(currentMode);
+          // If animated is available, drop static to avoid double overlay
+          if (typeof radarLayer !== 'undefined' && map.hasLayer(radarLayer) && (currentMode === 'animated' || currentMode === 'auto')) {
             map.removeLayer(radarLayer);
           }
+          document.getElementById('radarDiag').textContent = `Recommended max frames: ${RECOMMENDED_MAX_FRAMES} • Using: ${MAX_FRAMES}`;
         } else {
-          // Hide controls if we couldn't load frames
+          // Hide certain controls if frames unavailable
           const controls = document.getElementById('radarControls');
-          if (controls) controls.style.display = 'none';
+          if (controls) controls.style.opacity = '0.6';
+          document.getElementById('radarDiag').textContent = 'RainViewer frames unavailable; showing static NEXRAD.';
+          setMode('static');
         }
       } catch (e) {
         console.error('RainViewer init failed', e);
-        const controls = document.getElementById('radarControls');
-        if (controls) controls.style.display = 'none';
+        document.getElementById('radarDiag').textContent = 'Animated radar failed; showing static NEXRAD.';
+        setMode('static');
       }
     }
 
+    // UI wire-up for radar controls
     document.getElementById('playBtn')?.addEventListener('click', () => {
       if (isPlaying) pause(); else play();
     });
@@ -311,8 +441,31 @@
       const v = parseInt(e.target.value, 10) || 0;
       showFrame(v);
     });
-
-    initRadarAnimation();
+    document.getElementById('maxFrames')?.addEventListener('input', (e) => {
+      const v = Math.max(6, Math.min(60, parseInt(e.target.value, 10) || RECOMMENDED_MAX_FRAMES));
+      MAX_FRAMES = v;
+      document.getElementById('maxFramesLbl').textContent = String(v);
+    });
+    document.getElementById('maxFrames')?.addEventListener('change', () => {
+      // reinitialize with new cap
+      pause();
+      initRadarAnimation();
+    });
+    document.getElementById('speedSlider')?.addEventListener('input', (e) => {
+      const v = Math.max(120, Math.min(800, parseInt(e.target.value, 10) || 450));
+      FRAME_INTERVAL = v;
+      document.getElementById('speedLbl').textContent = v + ' ms';
+      if (isPlaying) { pause(); play(); }
+    });
+    document.getElementById('opacitySlider')?.addEventListener('input', (e) => {
+      const v = (Math.max(20, Math.min(100, parseInt(e.target.value, 10) || 60))) / 100;
+      document.getElementById('opacityLbl').textContent = v.toFixed(2);
+      setRadarOpacity(v);
+    });
+    document.getElementById('modeAuto')?.addEventListener('click', () => setMode('auto'));
+    document.getElementById('modeAnim')?.addEventListener('click', () => setMode('animated'));
+    document.getElementById('modeStatic')?.addEventListener('click', () => setMode('static'));
+    document.getElementById('modeOff')?.addEventListener('click', () => setMode('off'));
 
     // --- Helpers ---
     const $ = (id) => document.getElementById(id);
@@ -324,16 +477,13 @@
       const T = tempF;
       const R = rh;
       if (T == null || R == null) return null;
-      // If it's not warm/humid enough, heat index ~= T
       if (T < 80 || R < 40) return Math.round(T);
       let HI = -42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R + 0.00085282*T*R*R - 0.00000199*T*T*R*R;
-      // Adjustments
       if (R < 13 && T >= 80 && T <= 112) HI -= ((13 - R)/4) * Math.sqrt((17 - Math.abs(T - 95))/17);
       if (R > 85 && T >= 80 && T <= 87) HI += ((R - 85)/10) * ((87 - T)/5);
       return Math.round(HI);
     }
 
-    // Probability of precipitation helper
     function popVal(obj) {
       if (!obj) return null;
       const v = obj.value; // % or null
@@ -468,7 +618,6 @@
     }
 
     async function fetchFromCube(){
-      // Try multiple known URLs and accept 0–2 decimals (e.g., 655, 655.1, 655.12)
       const candidates = [
         'https://r.jina.ai/https://cubecarolinas.com/lake-levels/',
         'https://r.jina.ai/http://cubecarolinas.com/lake-levels/',
@@ -558,36 +707,269 @@
       renderLakeLevels(vals);
     }
 
-    // Refresh button
-    $('refreshBtn').addEventListener('click', () => {
-      loadForecast().catch(err => {
-        console.error(err);
-        $('lastUpdated').textContent = 'Refresh failed. Try again.';
-      });
-      loadLakeLevels().catch(console.error);
-    });
+    // --- High Rock detailed stats ---
+    function toPoolFt(gageFt){ return USGS_HIGHROCK_DATUM_FT + gageFt; }
 
-    // --- Lake parser self-tests (dev) ---
-    try {
-      (function testLakeParser(){
-        const reHR = /High Rock(?: Lake)?[^0-9]*([0-9]{3}(?:\.[0-9]+)?)/i;
-        const reTT = /Tuckertown(?: Lake)?[^0-9]*([0-9]{3}(?:\.[0-9]+)?)/i;
-        const s1 = 'High Rock Lake level 655.12 ft — Tuckertown 596.0 ft';
-        console.assert(parseFloat(s1.match(reHR)[1]) === 655.12, 'HR sample1');
-        console.assert(parseFloat(s1.match(reTT)[1]) === 596.0, 'TT sample1');
-        const s2 = 'High Rock 655 ft | Tuckertown Lake 596 ft';
-        console.assert(parseFloat(s2.match(reHR)[1]) === 655, 'HR sample2');
-        console.assert(parseFloat(s2.match(reTT)[1]) === 596, 'TT sample2');
-        console.log('Lake level parser tests passed');
-      })();
-    } catch(e){ console.warn('Lake parser tests failed', e); }
+    async function fetchHRSeries(days=30){
+      // Instantaneous values for the last N days
+      const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&siteStatus=all&period=P${days}D`;
+      const data = await fetch(url).then(r => r.json());
+      const arr = data?.value?.timeSeries?.[0]?.values?.[0]?.value || [];
+      return arr.map(p => ({ t: new Date(p.dateTime), v: toPoolFt(parseFloat(p.value)) }))
+               .filter(p => isFinite(p.v));
+    }
 
-    // Initial load
-    loadForecast().catch(err => {
-      console.error(err);
-      $('lastUpdated').textContent = 'Failed to load data.';
-    });
-    loadLakeLevels().catch(console.error);
+    async function fetchHRStatsDaily(){
+      // Daily statistics (percentiles by day-of-year)
+      const url = `https://waterservices.usgs.gov/nwis/stat/?format=rdb&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&statReportType=daily&statTypeCd=all`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('stat service error ' + res.status);
+        const text = await res.text();
+        const lines = text.split(/\r?\n/).filter(l => l && !l.startsWith('#'));
+        
+        const headerIdx = lines.findIndex(l => /month_nu/.test(l) && /day_nu/.test(l));
+        if (headerIdx === -1) {
+          console.warn('Could not find header row in USGS stats response.');
+          return null;
+        }
+        
+        const cols = lines[headerIdx].trim().split(/\t/);
+        const idx = (name) => cols.indexOf(name);
+        const ixMonth = idx('month_nu');
+        const ixDay = idx('day_nu');
+        const ixP50 = idx('p50_va');
+        const ixMean = idx('mean_va');
+        const ixMin = idx('min_va');
+        const ixMax = idx('max_va');
+
+        if ([ixMonth, ixDay, ixP50, ixMean, ixMin, ixMax].some(i => i < 0)) {
+            console.warn('Could not find all required columns in USGS stats response.');
+            return null;
+        }
+        
+        const statMap = new Map();
+        const mapKey = (m,d) => (`${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+        
+        for (let i = headerIdx + 1; i < lines.length; i++){
+          const line = lines[i];
+          
+          // More robustly skip non-data lines. Data lines start with "USGS".
+          if (!line.startsWith('USGS')) {
+              continue;
+          }
+
+          const r = line.split(/\t/);
+          
+          const maxIndex = Math.max(ixMonth, ixDay, ixP50, ixMean, ixMin, ixMax);
+          if (r.length <= maxIndex) {
+              continue;
+          }
+
+          const m = parseInt(r[ixMonth], 10);
+          const d = parseInt(r[ixDay], 10);
+          const p50 = parseFloat(r[ixP50]);
+          const mean = parseFloat(r[ixMean]);
+          const vmin = parseFloat(r[ixMin]);
+          const vmax = parseFloat(r[ixMax]);
+          
+          if (![m, d, p50, mean, vmin, vmax].every(Number.isFinite)) {
+            continue;
+          }
+          
+          statMap.set(mapKey(m,d), {
+            median: toPoolFt(p50),
+            mean: toPoolFt(mean),
+            min: toPoolFt(vmin),
+            max: toPoolFt(vmax),
+          });
+        }
+        return statMap.size ? statMap : null;
+      } catch(err){
+        console.error('USGS stats fetch failed', err);
+        return null;
+      }
+    }
+
+    function percentileRank(value, { min, max, median }){
+      if (value == null || min == null || max == null || median == null) return null;
+      if (value <= min) return 0;
+      if (value >= max) return 100;
+      // Linear interpolation between min-median and median-max
+      let pct = 50;
+      if (value < median) {
+        pct = 50 * (value - min) / (median - min);
+      } else {
+        pct = 50 + 50 * (value - median) / (max - median);
+      }
+      return Math.round(pct);
+    }
+
+    function formatDelta(d){
+      if (d == null || !isFinite(d)) return '—';
+      const sign = d >= 0 ? '+' : '−';
+      return `${sign}${Math.abs(d).toFixed(2)} ft`;
+    }
+
+    function drawSparkline(svgId, data, hlines=[]) {
+      const svg = document.getElementById(svgId);
+      if (!svg || !data.length) return;
+      svg.innerHTML = '';
+      const w = 600, h = 150;
+      const vals = data.map(p => p.v);
+      const times = data.map(p => p.t.getTime());
+      const minT = Math.min(...times), maxT = Math.max(...times);
+      const minV = Math.min(...vals), maxV = Math.max(...vals);
+      const pad = 0.05 * (maxV - minV);
+      const yMin = minV - pad, yMax = maxV + pad;
+
+      const toX = (t) => (t - minT) / (maxT - minT) * w;
+      const toY = (v) => h - ((v - yMin) / (yMax - yMin) * h);
+
+      const pathData = data.map((p, i) => `${i===0?'M':'L'} ${toX(p.t.getTime()).toFixed(2)} ${toY(p.v).toFixed(2)}`).join(' ');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', pathData);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'var(--accent)');
+      path.setAttribute('stroke-width', '2.5');
+      path.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(path);
+
+      if (hlines && hlines.length) {
+        for (const hl of hlines) {
+          const y = toY(hl.value);
+          if (y < 0 || y > h) continue;
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', '0');
+          line.setAttribute('y1', String(y));
+          line.setAttribute('x2', String(w));
+          line.setAttribute('y2', String(y));
+          line.setAttribute('stroke', hl.color || 'var(--muted)');
+          line.setAttribute('stroke-width', '1.5');
+          line.setAttribute('stroke-dasharray', '4 4');
+          line.setAttribute('opacity', '0.9');
+          svg.appendChild(line);
+        }
+      }
+    }
+
+    async function loadHighRockDetails(){
+      try {
+        // Fetch series & stats in parallel
+        const [series30, statMap] = await Promise.all([
+          fetchHRSeries(30).catch(() => []),
+          fetchHRStatsDaily().catch(() => null)
+        ]);
+        if (!series30.length){
+          document.getElementById('hrMeta').textContent = 'High Rock stats unavailable (USGS series not returned).';
+          return;
+        }
+        const last = series30[series30.length - 1];
+        const nowFt = last.v;
+        const full = FULL_POND.highrock;
+        const vsFull = (nowFt - full);
+
+        // 24h & 7d deltas
+        const nowMs = last.t.getTime();
+        const findAgo = (hrs) => {
+          const target = nowMs - hrs*3600*1000;
+          // find earliest point after target
+          for (let i=0; i<series30.length; i++){
+            if (series30[i].t.getTime() >= target) return series30[i].v;
+          }
+          return series30[0].v;
+        };
+        const v24 = findAgo(24);
+        const v7d = findAgo(24*7);
+        const d24 = nowFt - v24;
+        const d7 = nowFt - v7d;
+
+        // 30-day stats
+        const vals = series30.map(p => p.v);
+        const vmin = Math.min(...vals);
+        const vmax = Math.max(...vals);
+        const vmean = vals.reduce((a,b)=>a+b,0)/vals.length;
+
+        $('hrNow').textContent = nowFt.toFixed(2) + ' ft';
+        $('hrVsFull').textContent = (vsFull >= 0 ? '+' : '−') + Math.abs(vsFull).toFixed(2) + ' ft';
+        $('hrCh24').textContent = formatDelta(d24);
+        $('hrCh7').textContent = formatDelta(d7);
+        $('hrMinMax').textContent = `${vmin.toFixed(2)} / ${vmax.toFixed(2)} / ${vmean.toFixed(2)} ft`;
+
+        // Historical daily stats for today
+        const today = new Date();
+        const key = `${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const statsToday = statMap?.get(key) || null;
+        if (statsToday && [statsToday.median, statsToday.mean].every(Number.isFinite)) {
+          $('hrMed').textContent = statsToday.median.toFixed(2) + ' ft';
+          $('hrMean').textContent = statsToday.mean.toFixed(2) + ' ft';
+          const pr = percentileRank(nowFt, statsToday);
+          $('hrPctile').textContent = pr != null ? `${pr}th percentile` : '—';
+        } else {
+          $('hrMed').textContent = '—';
+          $('hrMean').textContent = '—';
+          $('hrPctile').textContent = '—';
+        }
+
+        // Same date last year
+        try {
+          const lastYearStart = new Date(today.getFullYear()-1, today.getMonth(), today.getDate()-1);
+          const lastYearEnd = new Date(today.getFullYear()-1, today.getMonth(), today.getDate()+1);
+          const urlLY = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&startDT=${lastYearStart.toISOString()}&endDT=${lastYearEnd.toISOString()}`;
+          const dataLY = await fetch(urlLY).then(r=>r.json());
+          const arrLY = dataLY?.value?.timeSeries?.[0]?.values?.[0]?.value || [];
+          let best = null, bestDiff = 1e15;
+          const mid = new Date(today.getFullYear()-1, today.getMonth(), today.getDate()).getTime();
+          for (const p of arrLY){
+            const t = new Date(p.dateTime).getTime();
+            const diff = Math.abs(t - mid);
+            if (diff < bestDiff){ bestDiff = diff; best = toPoolFt(parseFloat(p.value)); }
+          }
+          if (best != null && Number.isFinite(best)){
+            const d = nowFt - best;
+            $('hrLastYear').textContent = `${best.toFixed(2)} ft (${d>=0?'+':'−'}${Math.abs(d).toFixed(2)} ft vs now)`;
+          } else {
+            $('hrLastYear').textContent = '—';
+          }
+        } catch(e){ $('hrLastYear').textContent = '—'; }
+
+        // Sparkline
+        $('hrRange').textContent = `30‑day range ${vmin.toFixed(2)}–${vmax.toFixed(2)} ft`;
+        drawSparkline('hrSpark', series30, [
+          { value: FULL_POND.highrock, color: '#eab308' },
+          ...(statsToday ? [{ value: statsToday.median, color: '#22c55e' }] : [])
+        ]);
+
+        // CSV download
+        $('dlCsv').onclick = () => {
+          const rows = [['timestamp','elevation_ft']].concat(series30.map(p => [p.t.toISOString(), p.v.toFixed(3)]));
+          const csv = rows.map(r => r.join(',')).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'high_rock_30day.csv';
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        };
+      } catch(err){
+        console.error('loadHighRockDetails failed', err);
+        document.getElementById('hrMeta').textContent = 'High Rock stats unavailable.';
+      }
+    }
+
+    // --- Initial Load ---
+    function initialLoad() {
+      loadForecast();
+      loadLakeLevels();
+      loadHighRockDetails();
+      initRadarAnimation();
+    }
+
+    document.getElementById('refreshBtn')?.addEventListener('click', initialLoad);
+    
+    // Run on page load
+    initialLoad();
+
   </script>
 </body>
 </html>
