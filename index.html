@@ -710,13 +710,34 @@
     // --- High Rock detailed stats ---
     function toPoolFt(gageFt){ return USGS_HIGHROCK_DATUM_FT + gageFt; }
 
+    async function fetchHRSeriesFromNOAA(days=30){
+      try {
+        const url = 'https://r.jina.ai/https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=hgrn7&output=json';
+        const data = await fetch(url).then(r => r.json());
+        const arr = data?.observed || data?.observed?.data || [];
+        const cutoff = Date.now() - days*24*3600*1000;
+        return arr
+          .map(p => ({ t: new Date(p.valid || p.dateTime || p.date), v: parseFloat(p.primary || p.Primary || p.value) }))
+          .filter(p => p.t.getTime() >= cutoff && isFinite(p.v));
+      } catch(err){
+        console.warn('NOAA AHPS series fetch failed', err);
+        return [];
+      }
+    }
+
     async function fetchHRSeries(days=30){
-      // Instantaneous values for the last N days
-      const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&siteStatus=all&period=P${days}D`;
-      const data = await fetch(url).then(r => r.json());
-      const arr = data?.value?.timeSeries?.[0]?.values?.[0]?.value || [];
-      return arr.map(p => ({ t: new Date(p.dateTime), v: toPoolFt(parseFloat(p.value)) }))
-               .filter(p => isFinite(p.v));
+      try {
+        // Instantaneous values for the last N days from USGS
+        const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&siteStatus=all&period=P${days}D`;
+        const data = await fetch(url).then(r => r.json());
+        const arr = data?.value?.timeSeries?.[0]?.values?.[0]?.value || [];
+        const series = arr.map(p => ({ t: new Date(p.dateTime), v: toPoolFt(parseFloat(p.value)) }))
+                         .filter(p => isFinite(p.v));
+        if (series.length) return series;
+      } catch(err){
+        console.warn('USGS series fetch failed', err);
+      }
+      return await fetchHRSeriesFromNOAA(days);
     }
 
     async function fetchHRStatsDaily(){
@@ -752,8 +773,8 @@
         const mapKey = (m,d) => (`${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
         
         for (let i = headerIdx + 1; i < lines.length; i++){
-          const line = lines[i];
-          
+          const line = lines[i].trim();
+
           // More robustly skip non-data lines. Data lines start with "USGS".
           if (!line.startsWith('USGS')) {
               continue;
