@@ -813,13 +813,16 @@
 
     function drawSparkline(svgId, data, hlines=[]) {
       const svg = document.getElementById(svgId);
-      if (!svg || !data.length) return;
+      // need at least two points and a valid SVG element to draw
+      if (!svg || data.length < 2) return;
       svg.innerHTML = '';
       const w = 600, h = 150;
       const vals = data.map(p => p.v);
       const times = data.map(p => p.t.getTime());
       const minT = Math.min(...times), maxT = Math.max(...times);
       const minV = Math.min(...vals), maxV = Math.max(...vals);
+      // avoid divide-by-zero when all timestamps or values are identical
+      if (minT === maxT || minV === maxV) return;
       const pad = 0.05 * (maxV - minV);
       const yMin = minV - pad, yMax = maxV + pad;
 
