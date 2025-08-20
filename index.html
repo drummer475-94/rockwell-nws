@@ -811,29 +811,44 @@
       return `${sign}${Math.abs(d).toFixed(2)} ft`;
     }
 
-    function drawSparkline(svgId, data, hlines=[]) {
+    function drawSparkline(svgId, data, hlines = []) {
       const svg = document.getElementById(svgId);
       if (!svg || !data.length) return;
       svg.innerHTML = '';
       const w = 600, h = 150;
       const vals = data.map(p => p.v);
       const times = data.map(p => p.t.getTime());
-      const minT = Math.min(...times), maxT = Math.max(...times);
-      const minV = Math.min(...vals), maxV = Math.max(...vals);
+      let minT = Math.min(...times), maxT = Math.max(...times);
+      let minV = Math.min(...vals), maxV = Math.max(...vals);
+      // expand ranges slightly if timestamps or values are identical
+      if (minT === maxT) { minT -= 1; maxT += 1; }
+      if (minV === maxV) { minV -= 0.5; maxV += 0.5; }
       const pad = 0.05 * (maxV - minV);
       const yMin = minV - pad, yMax = maxV + pad;
 
       const toX = (t) => (t - minT) / (maxT - minT) * w;
       const toY = (v) => h - ((v - yMin) / (yMax - yMin) * h);
 
-      const pathData = data.map((p, i) => `${i===0?'M':'L'} ${toX(p.t.getTime()).toFixed(2)} ${toY(p.v).toFixed(2)}`).join(' ');
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', pathData);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', 'var(--accent)');
-      path.setAttribute('stroke-width', '2.5');
-      path.setAttribute('stroke-linejoin', 'round');
-      svg.appendChild(path);
+      if (data.length === 1) {
+        const pt = data[0];
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', String(w / 2));
+        circle.setAttribute('cy', String(toY(pt.v)));
+        circle.setAttribute('r', '3');
+        circle.setAttribute('fill', 'var(--accent)');
+        svg.appendChild(circle);
+      } else {
+        const pathData = data
+          .map((p, i) => `${i === 0 ? 'M' : 'L'} ${toX(p.t.getTime()).toFixed(2)} ${toY(p.v).toFixed(2)}`)
+          .join(' ');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathData);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'var(--accent)');
+        path.setAttribute('stroke-width', '2.5');
+        path.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(path);
+      }
 
       if (hlines && hlines.length) {
         for (const hl of hlines) {
