@@ -714,10 +714,23 @@
       try {
         const url = 'https://r.jina.ai/https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=hgrn7&output=json';
         const data = await fetch(url).then(r => r.json());
-        const arr = data?.observed || data?.observed?.data || [];
+
+        // NOAA's response may nest the observed array under different keys.
+        // Pull out the array safely and guard against unexpected shapes.
+        const obs =
+          data?.observed?.data ??
+          data?.observed ??
+          data?.data?.observed?.data ??
+          data?.data?.observed ??
+          [];
+        const arr = Array.isArray(obs) ? obs : [];
+
         const cutoff = Date.now() - days*24*3600*1000;
         return arr
-          .map(p => ({ t: new Date(p.valid || p.dateTime || p.date), v: parseFloat(p.primary || p.Primary || p.value) }))
+          .map(p => ({
+            t: new Date(p.valid || p.dateTime || p.date),
+            v: parseFloat(p.primary || p.Primary || p.value)
+          }))
           .filter(p => p.t.getTime() >= cutoff && isFinite(p.v));
       } catch(err){
         console.warn('NOAA AHPS series fetch failed', err);
