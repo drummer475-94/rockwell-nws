@@ -813,6 +813,7 @@
 
     function drawSparkline(svgId, data, hlines = []) {
       const svg = document.getElementById(svgId);
+      // need a valid SVG element and at least one point to draw
       if (!svg || !data.length) return;
       svg.innerHTML = '';
       const w = 600, h = 150;
