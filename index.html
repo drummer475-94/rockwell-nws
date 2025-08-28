@@ -180,6 +180,11 @@
             <input id="opacitySlider" class="range" type="range" min="20" max="100" value="60" />
             <span id="opacityLbl" class="muted">0.60</span>
           </div>
+          <div class="row" style="gap:8px">
+            <span class="label">Resolution</span>
+            <button id="resStd" class="btn sm">Std</button>
+            <button id="resHd" class="btn sm">HD</button>
+          </div>
           <button id="playBtn" class="btn" aria-label="Play/Pause radar animation">Play</button>
         </div>
         <div class="footnote attribution" style="margin-top:8px">
@@ -271,14 +276,17 @@
     let MAX_FRAMES = RECOMMENDED_MAX_FRAMES;
     let FRAME_INTERVAL = 450; // ms
     let LAYER_OPACITY = 0.6;
+    let TILE_SIZE = 256;
 
-    function rvFrameUrl(t){
-      return `https://tilecache.rainviewer.com/v2/radar/${t}/256/{z}/{x}/{y}/2/1_1.png`;
+    function rvFrameUrl(t, size = TILE_SIZE){
+      return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
     }
 
     function ensureRainLayer(){
       if (!rainLayer) {
-        rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0), { opacity: LAYER_OPACITY, zIndex: 550 });
+        const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
+        if (TILE_SIZE === 512) opts.zoomOffset = -1;
+        rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0, TILE_SIZE), opts);
       }
       return rainLayer;
     }
@@ -294,9 +302,11 @@
       frameIndex = (i + rainFrames.length) % rainFrames.length;
       const t = rainFrames[frameIndex];
       if (rainLayer) {
-        rainLayer.setUrl(rvFrameUrl(t));
+        rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE));
       } else {
-        rainLayer = L.tileLayer(rvFrameUrl(t), { opacity: LAYER_OPACITY, zIndex: 550 });
+        const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
+        if (TILE_SIZE === 512) opts.zoomOffset = -1;
+        rainLayer = L.tileLayer(rvFrameUrl(t, TILE_SIZE), opts);
         if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
       }
       const slider = document.getElementById('frameSlider');
@@ -338,6 +348,23 @@
       if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
       if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
       document.getElementById('radarDiag').textContent = `Animated RainViewer • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
+    }
+
+    function setResolution(size){
+      const wasPlaying = isPlaying;
+      if (wasPlaying) pause();
+      TILE_SIZE = size;
+      FRAME_INTERVAL = size === 512 ? 650 : 450;
+      const speedSlider = document.getElementById('speedSlider');
+      if (speedSlider) {
+        speedSlider.value = String(FRAME_INTERVAL);
+        document.getElementById('speedLbl').textContent = FRAME_INTERVAL + ' ms';
+      }
+      if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+      rainLayer = null;
+      showFrame(frameIndex);
+      setMode(currentMode);
+      if (wasPlaying) play();
     }
 
     async function initRadarAnimation(){
@@ -410,6 +437,8 @@
       document.getElementById('opacityLbl').textContent = v.toFixed(2);
       setRadarOpacity(v);
     });
+    document.getElementById('resStd')?.addEventListener('click', () => setResolution(256));
+    document.getElementById('resHd')?.addEventListener('click', () => setResolution(512));
     document.getElementById('modeAuto')?.addEventListener('click', () => setMode('auto'));
     document.getElementById('modeAnim')?.addEventListener('click', () => setMode('animated'));
     document.getElementById('modeStatic')?.addEventListener('click', () => setMode('static'));
