@@ -225,6 +225,11 @@
       <div id="daily" class="list loading"></div>
     </section>
 
+    <section id="alerts" class="card">
+      <h2 style="margin:6px 4px 12px">Watches & Warnings</h2>
+      <div id="alertsList" class="list"></div>
+    </section>
+
     <p class="footnote">
       Tip: Add this page to your phone’s home screen for quick access. Values refresh when you tap <strong>Refresh</strong>.
     </p>
@@ -445,6 +450,12 @@
       return `${dir} ${spd}`.trim() || '—';
     }
 
+    function severityColor(sev){
+      if (sev === 'Extreme' || sev === 'Severe') return 'var(--bad)';
+      if (sev === 'Moderate') return 'var(--warn)';
+      return 'var(--accent)';
+    }
+
     // --- Fetch NWS endpoints ---
     async function loadForecast() {
       $('lastUpdated').textContent = 'Loading…';
@@ -643,6 +654,36 @@
       addRow('Tuckertown Lake', vals.tuckertown, FULL_POND.tuckertown);
     }
 
+    function renderAlerts(alerts){
+      const cont = $('alertsList');
+      if (!cont) return;
+      cont.innerHTML = '';
+      if (!alerts.length) {
+        const div = document.createElement('div');
+        div.className = 'muted';
+        div.textContent = 'No active alerts.';
+        cont.appendChild(div);
+        return;
+      }
+      alerts.forEach(a => {
+        const div = document.createElement('div');
+        div.className = 'dayCard';
+        div.style.borderLeft = `6px solid ${severityColor(a.severity)}`;
+        const desc = (a.description || '').replace(/\n+/g, '<br/>');
+        const expires = a.expires ? new Date(a.expires).toLocaleString() : '';
+        div.innerHTML = `
+          <div class="top">
+            <div>
+              <div style="font-weight:800"><a href="${a.link}" target="_blank" rel="noreferrer noopener">${a.event || 'Alert'}</a></div>
+              <div class="muted">${expires ? 'Expires ' + expires : ''}</div>
+            </div>
+          </div>
+          <div class="muted" style="margin-top:6px">${desc}</div>
+        `;
+        cont.appendChild(div);
+      });
+    }
+
     async function loadLakeLevels(){
       const vals = { highrock: null, tuckertown: null };
       // Try operator site first for both
@@ -655,10 +696,32 @@
       renderLakeLevels(vals);
     }
 
+    async function loadAlerts(){
+      const cont = $('alertsList');
+      if (!cont) return;
+      cont.innerHTML = '<div class="muted">Loading…</div>';
+      try {
+        const url = `https://api.weather.gov/alerts/active?point=${LAT},${LON}`;
+        const data = await fetch(url, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json());
+        const alerts = (data?.features || []).map(f => ({
+          event: f.properties?.event,
+          description: f.properties?.description,
+          expires: f.properties?.expires || f.properties?.ends,
+          severity: f.properties?.severity,
+          link: f.id || f.properties?.id || ''
+        }));
+        renderAlerts(alerts);
+      } catch(err) {
+        console.warn('Alerts fetch failed', err);
+        cont.innerHTML = '<div class="muted">Failed to load alerts.</div>';
+      }
+    }
+
     // --- Initial Load ---
     function initialLoad() {
       loadForecast();
       loadLakeLevels();
+      loadAlerts();
       initRadarAnimation();
     }
 
