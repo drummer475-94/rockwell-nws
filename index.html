@@ -225,6 +225,11 @@
       <div id="daily" class="list loading"></div>
     </section>
 
+    <section class="card">
+      <h2 style="margin:6px 4px 12px">Long range (days 8–14)</h2>
+      <div id="longRange" class="list loading"></div>
+    </section>
+
     <p class="footnote">
       Tip: Add this page to your phone’s home screen for quick access. Values refresh when you tap <strong>Refresh</strong>.
     </p>
@@ -488,6 +493,45 @@
       $('lastUpdated').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
     }
 
+    async function loadLongRangeForecast() {
+      const cont = $('longRange');
+      if (!cont) return;
+      cont.classList.add('loading');
+      try {
+        const url = `https://forecast.weather.gov/MapClick.php?lat=${LAT}&lon=${LON}&FcstType=digitalJSON`;
+        const data = await fetch(url).then(r => r.json());
+        const names = data?.time?.startPeriodName || [];
+        const temps = data?.data?.temperature || [];
+        const pops = data?.data?.pop12 || [];
+        const wx = data?.data?.weather || [];
+        const windSpd = data?.data?.windSpeed || [];
+        const windDir = data?.data?.windDirection || [];
+        const icons = data?.data?.iconLink || [];
+        const labels = data?.time?.tempLabel || [];
+        const periods = [];
+        for (let i = 0; i < labels.length; i++) {
+          if (labels[i] === 'High') {
+            periods.push({
+              name: names[i],
+              temperature: temps[i],
+              probabilityOfPrecipitation: { value: pops[i] },
+              shortForecast: wx[i],
+              windSpeed: windSpd[i] ? `${windSpd[i]} mph` : '',
+              windDirection: windDir[i] || '',
+              icon: icons[i]
+            });
+          }
+        }
+        const extended = periods.slice(7, 14);
+        renderLongRange(extended);
+      } catch (err) {
+        console.error(err);
+        cont.innerHTML = '<div class="error">Could not load long range forecast.</div>';
+      } finally {
+        cont.classList.remove('loading');
+      }
+    }
+
     function renderHourly(periods) {
       const cont = $('hourly');
       cont.innerHTML = '';
@@ -521,6 +565,34 @@
       // Use daytime periods for a clean 7-day overview
       const days = periods.filter(p => p.isDaytime).slice(0, 7);
       days.forEach(p => {
+        const div = document.createElement('div');
+        div.className = 'dayCard';
+        const pop = popVal(p.probabilityOfPrecipitation);
+        const icon = p.icon ? `<img src="${p.icon}" alt="${p.shortForecast}" style="width:44px;height:44px;border-radius:10px;object-fit:cover"/>` : '';
+        div.innerHTML = `
+          <div class="top">
+            <div>
+              <div style="font-weight:800">${p.name}</div>
+              <div class="muted">${p.shortForecast || ''}</div>
+            </div>
+            ${icon}
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div class="pill"><span>🌡️</span><strong>${Math.round(p.temperature)}°F</strong></div>
+            <div class="pill"><span>🌧️</span><strong>${isFinite(pop) ? pop + '%' : '—'}</strong></div>
+            <div class="pill"><span>💨</span><strong>${windNowText(p)}</strong></div>
+          </div>
+        `;
+        cont.appendChild(div);
+      });
+      cont.classList.remove('loading');
+    }
+
+    function renderLongRange(periods) {
+      const cont = $('longRange');
+      if (!cont) return;
+      cont.innerHTML = '';
+      periods.forEach(p => {
         const div = document.createElement('div');
         div.className = 'dayCard';
         const pop = popVal(p.probabilityOfPrecipitation);
@@ -658,6 +730,7 @@
     // --- Initial Load ---
     function initialLoad() {
       loadForecast();
+      loadLongRangeForecast();
       loadLakeLevels();
       initRadarAnimation();
     }
