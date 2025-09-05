@@ -527,7 +527,7 @@
       if (!cont) return;
       cont.classList.add('loading');
       try {
-        const url = `https://forecast.weather.gov/MapClick.php?lat=${LAT}&lon=${LON}&FcstType=digitalJSON`;
+        const url = `https://r.jina.ai/https://forecast.weather.gov/MapClick.php?lat=${LAT}&lon=${LON}&FcstType=digitalJSON`;
         const data = await fetch(url).then(r => r.json());
         const names = data?.time?.startPeriodName || [];
         const temps = data?.data?.temperature || [];
