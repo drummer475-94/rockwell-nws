@@ -230,10 +230,7 @@
       <div id="daily" class="list loading"></div>
     </section>
 
-    <section class="card">
-      <h2 style="margin:6px 4px 12px">Long range (days 8–14)</h2>
-      <div id="longRange" class="list loading"></div>
-    </section>
+    
 
     <p class="footnote">
       Tip: Add this page to your phone’s home screen for quick access. Values refresh when you tap <strong>Refresh</strong>.
@@ -692,10 +689,23 @@
           const html = await fetch(url).then(r => r.text());
           if (!html) continue;
           const { hr, tt } = parse(html);
+          // Refine Tuckertown: avoid matching the full-pond value, prefer decimal ft near name
+          let ttRefined = tt;
+          try {
+            const idxTT = html.toLowerCase().indexOf('tuckertown');
+            if (idxTT !== -1) {
+              const winTT = html.slice(idxTT, idxTT + 800);
+              const mDecTT = winTT.match(/([0-9]{3}\.[0-9]+)\s*ft?/i);
+              if (mDecTT) {
+                const v = parseFloat(mDecTT[1]);
+                if (!Number.isNaN(v) && Math.abs(v - (FULL_POND?.tuckertown || 0)) > 0.001) ttRefined = v;
+              }
+            }
+          } catch (_) {}
           const now = new Date().toISOString();
           const result = {
             highrock: hr != null ? { value: +(+hr).toFixed(2), when: now, src: 'Cube Carolinas' } : null,
-            tuckertown: tt != null ? { value: +(+tt).toFixed(2), when: now, src: 'Cube Carolinas' } : null
+            tuckertown: ttRefined != null ? { value: +(+ttRefined).toFixed(2), when: now, src: 'Cube Carolinas' } : null
           };
           if (result.highrock || result.tuckertown) return result;
         } catch(err){ console.warn('Cube levels fetch failed', url, err); }
@@ -759,7 +769,6 @@
     // --- Initial Load ---
     function initialLoad() {
       loadForecast();
-      loadLongRangeForecast();
       loadLakeLevels();
       initRadarAnimation();
     }
