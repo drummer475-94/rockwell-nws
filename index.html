@@ -84,6 +84,7 @@
     @media (min-width: 900px) {
       .grid { grid-template-columns: 1.15fr .85fr; }
     }
+    .col { display: flex; flex-direction: column; gap: 16px; }
 
     .card {
       background: var(--card); border-radius: 18px; padding: 14px; box-shadow: var(--shadow);
@@ -146,7 +147,8 @@
 
   <main class="container">
     <section class="grid">
-      <div class="card">
+      <div class="col">
+        <div class="card">
         <h2 style="margin:6px 4px 10px">Radar</h2>
         <div id="radar" aria-label="Radar map for Rockwell, NC"></div>
         <div id="radarControls" class="row radarControls" style="margin-top:10px; gap:10px">
@@ -197,8 +199,9 @@
           <span id="radarDiag" class="muted"></span>
         </div>
       </div>
-      <div class="card">
-        <h2 style="margin:6px 4px 10px">Right now</h2>
+      <div class="col">
+        <div class="card">
+          <h2 style="margin:6px 4px 10px">Right now</h2>
         <div class="kpis">
           <div class="kpi"><div class="label">Current Temp</div><div id="nowTemp" class="value">—</div></div>
           <div class="kpi"><div class="label">Heat Index</div><div id="heatIndex" class="value">—</div></div>
@@ -208,6 +211,19 @@
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <div class="lastUpdated" id="lastUpdated">Loading…</div>
           <div class="footnote">Data: <a href="https://api.weather.gov/" target="_blank" rel="noreferrer noopener">NWS</a></div>
+        </div>
+        </div>
+        <div class="card">
+          <h2 style="margin:6px 4px 10px">Details</h2>
+          <div class="kpis">
+            <div class="kpi"><div class="label">Dew Point</div><div id="dewPoint" class="value">-</div></div>
+            <div class="kpi"><div class="label">Humidity</div><div id="humidityNow" class="value">-</div></div>
+            <div class="kpi"><div class="label">Rain (1h)</div><div id="pop1" class="value">-</div></div>
+            <div class="kpi"><div class="label">Wind Gust</div><div id="gustNow" class="value">-</div></div>
+            <div class="kpi"><div class="label">Sunrise</div><div id="sunrise" class="value">-</div></div>
+            <div class="kpi"><div class="label">Sunset</div><div id="sunset" class="value">-</div></div>
+          </div>
+          <div class="footnote">Sun times: sunrise-sunset.org</div>
         </div>
       </div>
     </section>
@@ -463,6 +479,30 @@
       return Math.round(HI);
     }
 
+    // Dew point (Magnus formula)
+    function dewPointF(tempF, rh) {
+      if (tempF == null || rh == null) return null;
+      const tC = (tempF - 32) * 5/9;
+      const a = 17.27, b = 237.7;
+      const gamma = (a * tC) / (b + tC) + Math.log(Math.max(1e-6, rh) / 100);
+      const dpC = (b * gamma) / (a - gamma);
+      return Math.round(dpC * 9/5 + 32);
+    }
+
+    function parseWindMph(windStr) {
+      if (!windStr) return null;
+      const nums = String(windStr).match(/\d+/g);
+      if (!nums || !nums.length) return null;
+      return Math.max(...nums.map(n => parseInt(n, 10)));
+    }
+
+    function gustMph(period) {
+      const g = period?.windGust;
+      if (typeof g === 'number') return Math.round(g);
+      const mph = parseWindMph(g);
+      return mph != null ? mph : null;
+    }
+
     function popVal(obj) {
       if (!obj) return null;
       const v = obj.value; // % or null
@@ -506,9 +546,18 @@
       const nowTemp = now?.temperature;
       const nowRH = now?.relativeHumidity?.value;
       const nowHI = heatIndexF(nowTemp, nowRH);
-      $('nowTemp').textContent = nowTemp != null ? `${Math.round(nowTemp)}°F` : '—';
-      $('heatIndex').textContent = nowHI != null ? `${nowHI}°F` : '—';
+      $('nowTemp').textContent = nowTemp != null ? `${Math.round(nowTemp)}°F` : '-';
+      $('heatIndex').textContent = nowHI != null ? `${nowHI}°F` : '-';
       $('windNow').textContent = windNowText(now);
+
+      // Details (top-right)
+      const dp = dewPointF(nowTemp, nowRH);
+      const gust = gustMph(now);
+      $('dewPoint')?.textContent = dp != null ? `${dp}°F` : '-';
+      $('humidityNow')?.textContent = nowRH != null ? `${Math.round(nowRH)}%` : '-';
+      const pop1 = popVal(now?.probabilityOfPrecipitation);
+      $('pop1')?.textContent = isFinite(pop1) ? `${Math.round(pop1)}%` : '-';
+      $('gustNow')?.textContent = gust != null ? `${gust} mph` : '-';
 
       // Chance of rain next 6h (max of next 6 hourly pops)
       const next6 = (hourly?.properties?.periods || []).slice(0, 6);
@@ -517,6 +566,19 @@
       $('pop6').textContent = isFinite(maxPop) ? `${Math.round(maxPop)}%` : '—';
 
       $('lastUpdated').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+    }
+
+    async function loadSunTimes() {
+      try {
+        const url = `https://r.jina.ai/https://api.sunrise-sunset.org/json?lat=${LAT}&lng=${LON}&formatted=0`;
+        const data = await fetch(url).then(r => r.json());
+        const sr = data?.results?.sunrise;
+        const ss = data?.results?.sunset;
+        if (sr) $('sunrise')?.textContent = fmtTime(sr);
+        if (ss) $('sunset')?.textContent = fmtTime(ss);
+      } catch (err) {
+        console.warn('Sun times fetch failed', err);
+      }
     }
 
     async function loadLongRangeForecast() {
@@ -771,6 +833,7 @@
       loadForecast();
       loadLakeLevels();
       initRadarAnimation();
+      loadSunTimes();
     }
 
     document.getElementById('refreshBtn')?.addEventListener('click', initialLoad);
