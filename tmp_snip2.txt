@@ -1,0 +1,43 @@
+      return null;
+    }
+
+    async function fetchFromCube(){
+      const candidates = [
+        'https://r.jina.ai/https://cubecarolinas.com/lake-levels/',
+        'https://r.jina.ai/http://cubecarolinas.com/lake-levels/',
+        'https://r.jina.ai/https://www.cubecarolinas.com/lake-levels/',
+        'https://r.jina.ai/https://cubecarolinas.com/current-lake-levels/'
+      ];
+      const parse = (html) => {
+        const find = (names) => {
+          for (const name of names) {
+            const re = new RegExp(name + "[^0-9]*([0-9]{3}(?:\.[0-9]+)?)", 'i');
+            const m = html.match(re);
+            if (m) return parseFloat(m[1]);
+          }
+          return null;
+        };
+        return {
+          hr: find(['High Rock Lake','High Rock']),
+          tt: find(['Tuckertown Lake','Tuckertown'])
+        };
+      };
+      for (const url of candidates) {
+        try {
+          const html = await fetch(url).then(r => r.text());
+          if (!html) continue;
+          const { hr, tt } = parse(html);
+          const now = new Date().toISOString();
+          const result = {
+            highrock: hr != null ? { value: +(+hr).toFixed(2), when: now, src: 'Cube Carolinas' } : null,
+            tuckertown: tt != null ? { value: +(+tt).toFixed(2), when: now, src: 'Cube Carolinas' } : null
+          };
+          if (result.highrock || result.tuckertown) return result;
+        } catch(err){ console.warn('Cube levels fetch failed', url, err); }
+      }
+      return { highrock: null, tuckertown: null };
+    }
+
+    async function fetchHighRockFromNOAA(){
+      try {
+        const text = await fetch('https://r.jina.ai/http://water.noaa.gov/gauges/hgrn7').then(r => r.text());
