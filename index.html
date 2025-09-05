@@ -464,6 +464,7 @@
 
     // --- Helpers ---
     const $ = (id) => document.getElementById(id);
+    const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
     const fmtTime = (dStr, opts={}) => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...opts }).format(new Date(dStr));
     const fmtDay = (dStr) => new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(dStr));
 
@@ -554,11 +555,11 @@
         // Details (top-right)
         const dp = dewPointF(nowTemp, nowRH);
         const gust = gustMph(now);
-        $('dewPoint')?.textContent = dp != null ? `${dp}°F` : '-';
-        $('humidityNow')?.textContent = nowRH != null ? `${Math.round(nowRH)}%` : '-';
+        setText('dewPoint', dp != null ? `${dp}°F` : '-');
+        setText('humidityNow', nowRH != null ? `${Math.round(nowRH)}%` : '-');
         const pop1 = popVal(now?.probabilityOfPrecipitation);
-        $('pop1')?.textContent = isFinite(pop1) ? `${Math.round(pop1)}%` : '-';
-        $('gustNow')?.textContent = gust != null ? `${gust} mph` : '-';
+        setText('pop1', isFinite(pop1) ? `${Math.round(pop1)}%` : '-');
+        setText('gustNow', gust != null ? `${gust} mph` : '-');
 
         // Chance of rain next 6h (max of next 6 hourly pops)
         const next6 = (hourly?.properties?.periods || []).slice(0, 6);
@@ -579,8 +580,8 @@
         const data = await fetch(url).then(r => r.json());
         const sr = data?.results?.sunrise;
         const ss = data?.results?.sunset;
-        if (sr) $('sunrise')?.textContent = fmtTime(sr);
-        if (ss) $('sunset')?.textContent = fmtTime(ss);
+        if (sr) setText('sunrise', fmtTime(sr));
+        if (ss) setText('sunset', fmtTime(ss));
       } catch (err) {
         console.warn('Sun times fetch failed', err);
       }
