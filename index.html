@@ -522,51 +522,55 @@
       $('lastUpdated').textContent = 'Loading…';
       $('hourly').classList.add('loading');
       $('daily').classList.add('loading');
+      try {
+        const pointsUrl = `https://api.weather.gov/points/${LAT},${LON}`;
+        const points = await fetch(pointsUrl, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json());
 
-      const pointsUrl = `https://api.weather.gov/points/${LAT},${LON}`;
-      const points = await fetch(pointsUrl, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json());
+        const hourlyUrl = points?.properties?.forecastHourly;
+        const dailyUrl  = points?.properties?.forecast;
 
-      const hourlyUrl = points?.properties?.forecastHourly;
-      const dailyUrl  = points?.properties?.forecast;
+        if (!hourlyUrl || !dailyUrl) {
+          $('lastUpdated').textContent = 'Could not load NWS endpoints.';
+          return;
+        }
 
-      if (!hourlyUrl || !dailyUrl) {
-        $('lastUpdated').textContent = 'Could not load NWS endpoints.';
-        return;
+        const [hourly, daily] = await Promise.all([
+          fetch(hourlyUrl, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json()),
+          fetch(dailyUrl,  { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json())
+        ]);
+
+        renderHourly(hourly?.properties?.periods || []);
+        renderDaily(daily?.properties?.periods || []);
+
+        // KPIs (now = first hourly period)
+        const now = (hourly?.properties?.periods || [])[0];
+        const nowTemp = now?.temperature;
+        const nowRH = now?.relativeHumidity?.value;
+        const nowHI = heatIndexF(nowTemp, nowRH);
+        $('nowTemp').textContent = nowTemp != null ? `${Math.round(nowTemp)}°F` : '-';
+        $('heatIndex').textContent = nowHI != null ? `${nowHI}°F` : '-';
+        $('windNow').textContent = windNowText(now);
+
+        // Details (top-right)
+        const dp = dewPointF(nowTemp, nowRH);
+        const gust = gustMph(now);
+        $('dewPoint')?.textContent = dp != null ? `${dp}°F` : '-';
+        $('humidityNow')?.textContent = nowRH != null ? `${Math.round(nowRH)}%` : '-';
+        const pop1 = popVal(now?.probabilityOfPrecipitation);
+        $('pop1')?.textContent = isFinite(pop1) ? `${Math.round(pop1)}%` : '-';
+        $('gustNow')?.textContent = gust != null ? `${gust} mph` : '-';
+
+        // Chance of rain next 6h (max of next 6 hourly pops)
+        const next6 = (hourly?.properties?.periods || []).slice(0, 6);
+        const pops = next6.map(p => popVal(p.probabilityOfPrecipitation)).filter(v => typeof v === 'number');
+        const maxPop = pops.length ? Math.max(...pops) : NaN;
+        $('pop6').textContent = isFinite(maxPop) ? `${Math.round(maxPop)}%` : '—';
+
+        $('lastUpdated').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+      } catch (err) {
+        console.error('Forecast fetch failed', err);
+        $('lastUpdated').textContent = 'Could not load forecast.';
       }
-
-      const [hourly, daily] = await Promise.all([
-        fetch(hourlyUrl, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json()),
-        fetch(dailyUrl,  { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json())
-      ]);
-
-      renderHourly(hourly?.properties?.periods || []);
-      renderDaily(daily?.properties?.periods || []);
-
-      // KPIs (now = first hourly period)
-      const now = (hourly?.properties?.periods || [])[0];
-      const nowTemp = now?.temperature;
-      const nowRH = now?.relativeHumidity?.value;
-      const nowHI = heatIndexF(nowTemp, nowRH);
-      $('nowTemp').textContent = nowTemp != null ? `${Math.round(nowTemp)}°F` : '-';
-      $('heatIndex').textContent = nowHI != null ? `${nowHI}°F` : '-';
-      $('windNow').textContent = windNowText(now);
-
-      // Details (top-right)
-      const dp = dewPointF(nowTemp, nowRH);
-      const gust = gustMph(now);
-      $('dewPoint')?.textContent = dp != null ? `${dp}°F` : '-';
-      $('humidityNow')?.textContent = nowRH != null ? `${Math.round(nowRH)}%` : '-';
-      const pop1 = popVal(now?.probabilityOfPrecipitation);
-      $('pop1')?.textContent = isFinite(pop1) ? `${Math.round(pop1)}%` : '-';
-      $('gustNow')?.textContent = gust != null ? `${gust} mph` : '-';
-
-      // Chance of rain next 6h (max of next 6 hourly pops)
-      const next6 = (hourly?.properties?.periods || []).slice(0, 6);
-      const pops = next6.map(p => popVal(p.probabilityOfPrecipitation)).filter(v => typeof v === 'number');
-      const maxPop = pops.length ? Math.max(...pops) : NaN;
-      $('pop6').textContent = isFinite(maxPop) ? `${Math.round(maxPop)}%` : '—';
-
-      $('lastUpdated').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
     }
 
     async function loadSunTimes() {
