@@ -801,16 +801,33 @@
           valueText = `${item.value.toFixed(2)} ft`;
           sub = (diff != null) ? `${mag} ft ${dir} full (${full} ft)` : '';
         }
-        div.innerHTML = `
-          <div class="top">
-            <div>
-              <div style="font-weight:800">${label}</div>
-              <div class="muted">${sub || ''}</div>
-            </div>
-            <div class="temp">${valueText}</div>
-          </div>
-          <div class="footnote">${item?.src ? 'Source: ' + item.src : ''}</div>
-        `;
+        const top = document.createElement('div');
+        top.className = 'top';
+        div.appendChild(top);
+
+        const left = document.createElement('div');
+        top.appendChild(left);
+
+        const lblDiv = document.createElement('div');
+        lblDiv.style.fontWeight = '800';
+        lblDiv.textContent = label;
+        left.appendChild(lblDiv);
+
+        const mutedDiv = document.createElement('div');
+        mutedDiv.className = 'muted';
+        mutedDiv.textContent = sub || '';
+        left.appendChild(mutedDiv);
+
+        const tempDiv = document.createElement('div');
+        tempDiv.className = 'temp';
+        tempDiv.textContent = valueText;
+        top.appendChild(tempDiv);
+
+        const footDiv = document.createElement('div');
+        footDiv.className = 'footnote';
+        footDiv.textContent = item?.src ? 'Source: ' + item.src : '';
+        div.appendChild(footDiv);
+
         cont.appendChild(div);
       };
       addRow('High Rock Lake', vals.highrock, FULL_POND.highrock);
