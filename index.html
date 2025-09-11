@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0ea5e9" />
-  <title>Rockwell, NC • NWS Forecast (v2)</title>
+  <title>NWS Forecast (v2)</title>
   <!-- Leaflet (map) -->
   <link
     rel="stylesheet"
@@ -136,7 +136,7 @@
     <nav class="nav">
       <div class="pill" title="Live">
         <span class="statusDot"></span>
-        <span>Rockwell, NC</span>
+        <span id="location">Locating…</span>
       </div>
       <div style="flex:1"></div>
       <strong class="title">NWS Forecast</strong>
@@ -150,7 +150,7 @@
       <div class="col">
         <div class="card">
         <h2 style="margin:6px 4px 10px">Radar</h2>
-        <div id="radar" aria-label="Radar map for Rockwell, NC"></div>
+        <div id="radar" aria-label="Radar map"></div>
         <div id="radarControls" class="row radarControls" style="margin-top:10px; gap:10px">
           <div class="row" style="gap:8px">
             <span class="label">Mode</span>
@@ -254,30 +254,44 @@
   </main>
 
   <script>
-    // --- Configuration for Rockwell, NC ---
-    const LAT = 35.551;   // Rockwell, NC approx
-    const LON = -80.407;
+    // --- Location (default Rockwell, NC; overridden by geolocation) ---
+    let LAT = 35.551;   // Rockwell, NC approx
+    let LON = -80.407;
 
-    // --- Map (Leaflet + OSM base) ---
-    const map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: 'Map data © OpenStreetMap contributors'
-    }).addTo(map);
+    async function determineLocation() {
+      if (!('geolocation' in navigator)) return;
+      try {
+        const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject));
+        LAT = pos.coords.latitude;
+        LON = pos.coords.longitude;
+      } catch (err) {
+        console.warn('Geolocation failed', err);
+      }
+    }
 
-    // Static fallback radar (NEXRAD via Iowa State Mesonet)
-    let radarLayer = L.tileLayer(
-      'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
-      { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
-    ).addTo(map);
+    let map, marker, radarLayer;
 
-    const marker = L.circleMarker([LAT, LON], {
-      radius: 6,
-      color: '#0ea5e9',
-      fillColor: '#38bdf8',
-      fillOpacity: 0.95,
-      weight: 2
-    }).addTo(map).bindPopup('Rockwell, NC');
+    function initMap() {
+      map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: 'Map data © OpenStreetMap contributors'
+      }).addTo(map);
+
+      // Static fallback radar (NEXRAD via Iowa State Mesonet)
+      radarLayer = L.tileLayer(
+        'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
+        { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
+      ).addTo(map);
+
+      marker = L.circleMarker([LAT, LON], {
+        radius: 6,
+        color: '#0ea5e9',
+        fillColor: '#38bdf8',
+        fillOpacity: 0.95,
+        weight: 2
+      }).addTo(map).bindPopup('Loading location…');
+    }
 
     // --- RainViewer animated radar (frames + controls) ---
     let rainFrames = [];
@@ -526,6 +540,15 @@
       try {
         const pointsUrl = `https://api.weather.gov/points/${LAT},${LON}`;
         const points = await fetch(pointsUrl, { headers: { 'Accept': 'application/geo+json' } }).then(r => r.json());
+
+        const city = points?.properties?.relativeLocation?.properties?.city;
+        const state = points?.properties?.relativeLocation?.properties?.state;
+        const locName = city && state ? `${city}, ${state}` : `${LAT.toFixed(2)}, ${LON.toFixed(2)}`;
+        setText('location', locName);
+        document.title = `${locName} • NWS Forecast`;
+        const radarEl = $('radar');
+        if (radarEl) radarEl.setAttribute('aria-label', `Radar map for ${locName}`);
+        if (marker) marker.bindPopup(locName);
 
         const hourlyUrl = points?.properties?.forecastHourly;
         const dailyUrl  = points?.properties?.forecast;
@@ -860,9 +883,16 @@
     }
 
     document.getElementById('refreshBtn')?.addEventListener('click', initialLoad);
-    
+
+    async function init() {
+      await determineLocation();
+      initMap();
+      setText('location', `${LAT.toFixed(2)}, ${LON.toFixed(2)}`);
+      initialLoad();
+    }
+
     // Run on page load
-    initialLoad();
+    init();
 
   </script>
 </body>
