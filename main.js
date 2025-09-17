@@ -2,6 +2,12 @@
 let LAT = 35.551;   // Rockwell, NC approx
 let LON = -80.407;
 
+/**
+ * Attempts to get the user's current location using the browser's geolocation API.
+ * If successful, it updates the global LAT and LON variables.
+ * If it fails or the API is unavailable, it does nothing and the default location is used.
+ * @returns {Promise<void>} A promise that resolves when the location has been determined.
+ */
 async function determineLocation() {
   if (!('geolocation' in navigator)) return;
   try {
@@ -15,6 +21,10 @@ async function determineLocation() {
 
 let map, marker, radarLayer;
 
+/**
+ * Initializes the Leaflet map, adds a tile layer from OpenStreetMap,
+ * and sets up the initial static radar layer and location marker.
+ */
 function initMap() {
   map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -54,10 +64,21 @@ let FRAME_INTERVAL = 450; // ms
 let LAYER_OPACITY = 0.6;
 let TILE_SIZE = 256;
 
+/**
+ * Constructs the URL for a RainViewer radar tile.
+ * @param {number} t - The timestamp for the radar frame.
+ * @param {number} [size=TILE_SIZE] - The size of the tile (256 or 512).
+ * @returns {string} The URL for the radar tile.
+ */
 function rvFrameUrl(t, size = TILE_SIZE){
   return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
 }
 
+/**
+ * Ensures the RainViewer layer is created and returns it.
+ * If the layer doesn't exist, it creates it.
+ * @returns {L.TileLayer} The Leaflet tile layer for the animated radar.
+ */
 function ensureRainLayer(){
   if (!rainLayer) {
     const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
@@ -67,12 +88,20 @@ function ensureRainLayer(){
   return rainLayer;
 }
 
+/**
+ * Sets the opacity for both the static and animated radar layers.
+ * @param {number} v - The opacity value (0.0 to 1.0).
+ */
 function setRadarOpacity(v){
   LAYER_OPACITY = v;
   if (radarLayer) radarLayer.setOpacity(v);
   if (rainLayer) rainLayer.setOpacity(v);
 }
 
+/**
+ * Displays a specific frame of the animated radar.
+ * @param {number} i - The index of the frame to show.
+ */
 function showFrame(i){
   if (!rainFrames.length) return;
   frameIndex = (i + rainFrames.length) % rainFrames.length;
@@ -91,20 +120,35 @@ function showFrame(i){
   if (label) label.textContent = new Date(t * 1000).toLocaleString();
 }
 
+/**
+ * Starts the radar animation.
+ */
 function play(){
   if (animTimer || !rainFrames.length) return;
   isPlaying = true; updatePlayBtn();
   animTimer = setInterval(() => showFrame(frameIndex + 1), FRAME_INTERVAL);
 }
+
+/**
+ * Pauses the radar animation.
+ */
 function pause(){
   isPlaying = false; updatePlayBtn();
   if (animTimer) { clearInterval(animTimer); animTimer = null; }
 }
+
+/**
+ * Updates the text of the play/pause button based on the current animation state.
+ */
 function updatePlayBtn(){
   const btn = document.getElementById('playBtn');
   if (btn) btn.textContent = isPlaying ? 'Pause' : 'Play';
 }
 
+/**
+ * Sets the radar mode and updates the map layers accordingly.
+ * @param {('auto'|'animated'|'static'|'off')} mode - The desired radar mode.
+ */
 function setMode(mode){
   currentMode = mode;
   // Remove/add layers per mode
@@ -126,6 +170,10 @@ function setMode(mode){
   document.getElementById('radarDiag').textContent = `Animated RainViewer • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
 }
 
+/**
+ * Sets the resolution of the radar tiles.
+ * @param {number} size - The tile size (256 for standard, 512 for HD).
+ */
 function setResolution(size){
   const wasPlaying = isPlaying;
   if (wasPlaying) pause();
@@ -143,6 +191,10 @@ function setResolution(size){
   if (wasPlaying) play();
 }
 
+/**
+ * Fetches radar frame data from the RainViewer API and initializes the animation controls.
+ * @returns {Promise<void>} A promise that resolves when the radar animation is initialized.
+ */
 async function initRadarAnimation(){
   try {
     const res = await fetch('https://tilecache.rainviewer.com/api/maps.json');
@@ -221,12 +273,42 @@ document.getElementById('modeStatic')?.addEventListener('click', () => setMode('
 document.getElementById('modeOff')?.addEventListener('click', () => setMode('off'));
 
 // --- Helpers ---
+/**
+ * A shorthand for document.getElementById.
+ * @param {string} id The ID of the element to get.
+ * @returns {HTMLElement|null} The element with the specified ID, or null if not found.
+ */
 const $ = (id) => document.getElementById(id);
+
+/**
+ * Sets the textContent of an element.
+ * @param {string} id The ID of the element.
+ * @param {string} value The text to set.
+ */
 const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+
+/**
+ * Formats a date string into a localized time string.
+ * @param {string} dStr The date string to format.
+ * @param {object} [opts={}] Additional options for Intl.DateTimeFormat.
+ * @returns {string} The formatted time string.
+ */
 const fmtTime = (dStr, opts={}) => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...opts }).format(new Date(dStr));
+
+/**
+ * Formats a date string into a short, localized weekday string.
+ * @param {string} dStr The date string to format.
+ * @returns {string} The formatted day string (e.g., "Mon").
+ */
 const fmtDay = (dStr) => new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(dStr));
 
-// Heat Index (NOAA Rothfusz regression with adjustments)
+/**
+ * Calculates the heat index in Fahrenheit.
+ * Uses the NOAA Rothfusz regression with adjustments.
+ * @param {number|null} tempF The temperature in Fahrenheit.
+ * @param {number|null} rh The relative humidity (e.g., 85 for 85%).
+ * @returns {number|null} The calculated heat index, rounded to the nearest integer, or null if inputs are invalid.
+ */
 function heatIndexF(tempF, rh) {
   const T = tempF;
   const R = rh;
@@ -238,7 +320,12 @@ function heatIndexF(tempF, rh) {
   return Math.round(HI);
 }
 
-// Dew point (Magnus formula)
+/**
+ * Calculates the dew point in Fahrenheit using the Magnus formula.
+ * @param {number|null} tempF The temperature in Fahrenheit.
+ * @param {number|null} rh The relative humidity (e.g., 50 for 50%).
+ * @returns {number|null} The calculated dew point, rounded to the nearest integer, or null if inputs are invalid.
+ */
 function dewPointF(tempF, rh) {
   if (tempF == null || rh == null) return null;
   if (rh <= 0 || rh > 100) return null;
@@ -249,6 +336,11 @@ function dewPointF(tempF, rh) {
   return Math.round(dpC * 9/5 + 32);
 }
 
+/**
+ * Parses a wind speed string (e.g., "5 to 15 mph") and returns the maximum speed in MPH.
+ * @param {string|null} windStr The wind speed string from the NWS API.
+ * @returns {number|null} The maximum wind speed as a number, or null if parsing fails.
+ */
 function parseWindMph(windStr) {
   if (!windStr) return null;
   const nums = String(windStr).match(/\d+/g);
@@ -256,6 +348,11 @@ function parseWindMph(windStr) {
   return Math.max(...nums.map(n => parseInt(n, 10)));
 }
 
+/**
+ * Extracts the wind gust speed in MPH from a forecast period object.
+ * @param {object|null} period The forecast period object from the NWS API.
+ * @returns {number|null} The wind gust in MPH, or null if not available.
+ */
 function gustMph(period) {
   const g = period?.windGust;
   if (typeof g === 'number') return Math.round(g);
@@ -263,12 +360,22 @@ function gustMph(period) {
   return mph != null ? mph : null;
 }
 
+/**
+ * Extracts the probability of precipitation value from a NWS API object.
+ * @param {object|null} obj The object containing a `value` property (e.g., `probabilityOfPrecipitation`).
+ * @returns {number|null} The precipitation probability as a number, or null if not available.
+ */
 function popVal(obj) {
   if (!obj) return null;
   const v = obj.value; // % or null
   return typeof v === 'number' ? v : null;
 }
 
+/**
+ * Formats a wind description string from a forecast period object.
+ * @param {object|null} period The forecast period object from the NWS API.
+ * @returns {string} A formatted wind description (e.g., "SW 5–10 mph") or "—" if not available.
+ */
 function windNowText(period) {
   if (!period) return '—';
   const dir = period.windDirection || '';
@@ -277,6 +384,12 @@ function windNowText(period) {
 }
 
 // --- Fetch NWS endpoints ---
+/**
+ * Loads the main weather forecast data from the NWS API.
+ * This includes fetching gridpoints, hourly, and daily forecasts.
+ * It then updates the UI with the fetched data.
+ * @returns {Promise<void>} A promise that resolves when the forecast is loaded and rendered.
+ */
 async function loadForecast() {
   $('lastUpdated').textContent = 'Loading…';
   $('hourly').classList.add('loading');
@@ -341,6 +454,10 @@ async function loadForecast() {
   }
 }
 
+/**
+ * Loads sunrise and sunset times from the sunrise-sunset.org API.
+ * @returns {Promise<void>} A promise that resolves when the sun times are loaded and rendered.
+ */
 async function loadSunTimes() {
   try {
     const url = `https://r.jina.ai/https://api.sunrise-sunset.org/json?lat=${LAT}&lng=${LON}&formatted=0`;
@@ -354,6 +471,10 @@ async function loadSunTimes() {
   }
 }
 
+/**
+ * Loads the long-range (days 8-14) forecast from forecast.weather.gov.
+ * @returns {Promise<void>} A promise that resolves when the forecast is loaded and rendered.
+ */
 async function loadLongRangeForecast() {
   const cont = $('longRange');
   if (!cont) return;
@@ -393,6 +514,10 @@ async function loadLongRangeForecast() {
   }
 }
 
+/**
+ * Renders the hourly forecast into the UI.
+ * @param {Array<object>} periods An array of hourly forecast period objects from the NWS API.
+ */
 function renderHourly(periods) {
   const cont = $('hourly');
   cont.innerHTML = '';
@@ -420,6 +545,10 @@ function renderHourly(periods) {
   cont.classList.remove('loading');
 }
 
+/**
+ * Renders the daily forecast into the UI.
+ * @param {Array<object>} periods An array of daily forecast period objects from the NWS API.
+ */
 function renderDaily(periods) {
   const cont = $('daily');
   cont.innerHTML = '';
@@ -449,6 +578,10 @@ function renderDaily(periods) {
   cont.classList.remove('loading');
 }
 
+/**
+ * Renders the long-range forecast into the UI.
+ * @param {Array<object>} periods An array of daily forecast period objects for the long-range forecast.
+ */
 function renderLongRange(periods) {
   const cont = $('longRange');
   if (!cont) return;
@@ -482,6 +615,10 @@ const USGS_HIGHROCK_SITE = '02122500';
 const USGS_HIGHROCK_DATUM_FT = 558.68; // NGVD29 (USGS inventory)
 const FULL_POND = { highrock: 655, tuckertown: 596 };
 
+/**
+ * Fetches the latest High Rock Lake level from the USGS.
+ * @returns {Promise<object|null>} A promise that resolves to an object with the lake level value, timestamp, and source, or null on failure.
+ */
 async function fetchHighRockFromUSGS(){
   try {
     const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${USGS_HIGHROCK_SITE}&parameterCd=00065&siteStatus=all`;
@@ -498,6 +635,10 @@ async function fetchHighRockFromUSGS(){
   return null;
 }
 
+/**
+ * Fetches lake levels for High Rock and Tuckertown from Cube Carolinas' website by scraping the HTML.
+ * @returns {Promise<object>} A promise that resolves to an object containing highrock and tuckertown level data, or null values on failure.
+ */
 async function fetchFromCube(){
   const candidates = [
     'https://r.jina.ai/https://cubecarolinas.com/lake-levels/',
@@ -548,6 +689,10 @@ async function fetchFromCube(){
   return { highrock: null, tuckertown: null };
 }
 
+/**
+ * Fetches the High Rock Lake level from the NOAA NWPS website by scraping the HTML.
+ * @returns {Promise<object|null>} A promise that resolves to an object with the lake level value, timestamp, and source, or null on failure.
+ */
 async function fetchHighRockFromNOAA(){
   try {
     const text = await fetch('https://r.jina.ai/http://water.noaa.gov/gauges/hgrn7').then(r => r.text());
@@ -557,6 +702,10 @@ async function fetchHighRockFromNOAA(){
   return null;
 }
 
+/**
+ * Renders the lake levels into the UI.
+ * @param {object} vals An object containing `highrock` and `tuckertown` lake level data.
+ */
 function renderLakeLevels(vals){
   const cont = $('lakes');
   if (!cont) return;
@@ -606,6 +755,11 @@ function renderLakeLevels(vals){
   addRow('Tuckertown Lake', vals.tuckertown, FULL_POND.tuckertown);
 }
 
+/**
+ * Loads lake level data from various sources and renders it.
+ * It tries Cube Carolinas first, then falls back to USGS and NOAA for High Rock Lake.
+ * @returns {Promise<void>} A promise that resolves when the lake levels are loaded and rendered.
+ */
 async function loadLakeLevels(){
   const vals = { highrock: null, tuckertown: null };
   // Try operator site first for both
@@ -619,6 +773,9 @@ async function loadLakeLevels(){
 }
 
 // --- Initial Load ---
+/**
+ * Triggers all the initial data loading functions for the application.
+ */
 function initialLoad() {
   loadForecast();
   loadLakeLevels();
@@ -628,6 +785,11 @@ function initialLoad() {
 
 document.getElementById('refreshBtn')?.addEventListener('click', initialLoad);
 
+/**
+ * The main initialization function for the application.
+ * It determines the user's location, initializes the map, and then loads all data.
+ * @returns {Promise<void>}
+ */
 async function init() {
   await determineLocation();
   initMap();
