@@ -647,17 +647,64 @@ async function fetchFromCube(){
     'https://r.jina.ai/https://cubecarolinas.com/current-lake-levels/'
   ];
   const parse = (html) => {
-    const find = (names) => {
-      for (const name of names) {
-        const re = new RegExp(name + "[^0-9]*([0-9]{3}(?:\.[0-9]+)?)", 'i');
-        const m = html.match(re);
-        if (m) return parseFloat(m[1]);
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const collectNums = (text) => {
+      if (!text) return [];
+      const matches = text.match(/([0-9]{3}(?:\\.[0-9]+)?)/g) || [];
+      return matches
+        .map(v => parseFloat(v))
+        .filter(v => Number.isFinite(v));
+    };
+    let doc = null;
+    if (typeof DOMParser !== 'undefined') {
+      try {
+        doc = new DOMParser().parseFromString(html, 'text/html');
+      } catch (err) {
+        console.warn('Cube DOM parse failed', err);
       }
-      return null;
+    }
+    const find = (names, avoidFull) => {
+      const values = [];
+      const lowerNames = names.map(n => n.toLowerCase());
+      if (doc?.body) {
+        const nodes = Array.from(doc.body.querySelectorAll('*'));
+        for (const node of nodes) {
+          const text = node.textContent || '';
+          if (!text) continue;
+          const lower = text.toLowerCase();
+          if (!lowerNames.some(n => lower.includes(n))) continue;
+          values.push(...collectNums(text));
+          const parent = node.parentElement;
+          if (parent) values.push(...collectNums(parent.textContent));
+          let sibling = node.nextElementSibling;
+          for (let i = 0; i < 3 && sibling; i++, sibling = sibling.nextElementSibling) {
+            values.push(...collectNums(sibling.textContent));
+          }
+        }
+      }
+      if (!values.length) {
+        for (const name of names) {
+          const re = new RegExp(escapeRegex(name) + "[^0-9]*([0-9]{3}(?:\\.[0-9]+)?)", 'i');
+          const m = html.match(re);
+          if (m) values.push(parseFloat(m[1]));
+        }
+      }
+      const unique = [];
+      for (const val of values) {
+        if (!Number.isFinite(val)) continue;
+        if (!unique.includes(val)) unique.push(val);
+      }
+      const preferNotFull = (arr) => (avoidFull != null ? arr.filter(v => Math.abs(v - avoidFull) > 0.002) : arr);
+      const decimals = unique.filter(v => Number.isFinite(v) && String(v).includes('.'));
+      let candidate = preferNotFull(decimals)[0];
+      if (candidate == null) candidate = decimals[0];
+      if (candidate == null) candidate = preferNotFull(unique)[0];
+      if (candidate == null) candidate = unique[0];
+      return candidate ?? null;
     };
     return {
-      hr: find(['High Rock Lake','High Rock']),
-      tt: find(['Tuckertown Lake','Tuckertown'])
+      hr: find(['High Rock Lake', 'High Rock'], FULL_POND?.highrock),
+      tt: find(['Tuckertown Lake', 'Tuckertown'], FULL_POND?.tuckertown)
     };
   };
   for (const url of candidates) {
@@ -665,23 +712,10 @@ async function fetchFromCube(){
       const html = await fetch(url).then(r => r.text());
       if (!html) continue;
       const { hr, tt } = parse(html);
-      // Refine Tuckertown: avoid matching the full-pond value, prefer decimal ft near name
-      let ttRefined = tt;
-      try {
-        const idxTT = html.toLowerCase().indexOf('tuckertown');
-        if (idxTT !== -1) {
-          const winTT = html.slice(idxTT, idxTT + 800);
-          const mDecTT = winTT.match(/([0-9]{3}\.[0-9]+)\s*ft?/i);
-          if (mDecTT) {
-            const v = parseFloat(mDecTT[1]);
-            if (!Number.isNaN(v) && Math.abs(v - (FULL_POND?.tuckertown || 0)) > 0.001) ttRefined = v;
-          }
-        }
-      } catch (_) {}
       const now = new Date().toISOString();
       const result = {
         highrock: hr != null ? { value: +(+hr).toFixed(2), when: now, src: 'Cube Carolinas' } : null,
-        tuckertown: ttRefined != null ? { value: +(+ttRefined).toFixed(2), when: now, src: 'Cube Carolinas' } : null
+        tuckertown: tt != null ? { value: +(+tt).toFixed(2), when: now, src: 'Cube Carolinas' } : null
       };
       if (result.highrock || result.tuckertown) return result;
     } catch(err){ console.warn('Cube levels fetch failed', url, err); }
