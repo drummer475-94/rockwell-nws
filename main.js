@@ -244,7 +244,7 @@ function dewPointF(tempF, rh) {
   if (rh <= 0 || rh > 100) return null;
   const tC = (tempF - 32) * 5/9;
   const a = 17.27, b = 237.7;
-  const gamma = (a * tC) / (b + tC) + Math.log(Math.min(Math.max(rh, 1), 100) / 100);
+  const gamma = (a * tC) / (b + tC) + Math.log(rh / 100);
   const dpC = (b * gamma) / (a - gamma);
   return Math.round(dpC * 9/5 + 32);
 }
