@@ -18,6 +18,7 @@ QUnit.module('Helpers', function() {
     assert.strictEqual(dewPointF(70, null), null, 'Handles null RH');
     assert.strictEqual(dewPointF(70, 0), null, 'Handles 0% RH');
     assert.strictEqual(dewPointF(70, 101), null, 'Handles >100% RH');
+    assert.strictEqual(dewPointF(70, 0.5), -47, 'Calculates dew point for very low RH');
   });
 
   QUnit.test('parseWindMph', function(assert) {
