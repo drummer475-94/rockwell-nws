@@ -30,3 +30,18 @@ This application utilizes data from the following sources:
 No build step or server is required. Simply open the `index.html` file in a modern web browser.
 
 The application will request permission to access your location to provide a local forecast. If you decline, it will default to a preset location (Rockwell, NC).
+
+## Development
+
+This project is built with vanilla HTML, CSS, and JavaScript. There are no external dependencies to install.
+
+### File Structure
+
+*   `index.html`: The main HTML file that defines the structure of the application.
+*   `main.js`: Contains all the JavaScript for the application, including API calls, data processing, and DOM manipulation. All functions are documented using JSDoc.
+*   `tests.html`: A page for running the unit tests.
+*   `tests.js`: Contains unit tests for the helper functions in `main.js`, using the QUnit framework.
+
+### Running Tests
+
+To run the tests, simply open the `tests.html` file in your web browser. The test results will be displayed on the page.
