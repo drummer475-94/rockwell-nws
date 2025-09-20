@@ -296,6 +296,58 @@ const setText = (id, value) => { const el = $(id); if (el) el.textContent = valu
 const fmtTime = (dStr, opts={}) => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...opts }).format(new Date(dStr));
 
 /**
+ * Calculates sunrise and sunset times for a given location using a simplified
+ * solar position model derived from NOAA/SunCalc algorithms. This provides a
+ * reliable fallback when the remote sunrise-sunset API is unavailable.
+ * @param {number} lat Latitude in decimal degrees.
+ * @param {number} lon Longitude in decimal degrees.
+ * @param {Date} [date=new Date()] The date to calculate sun times for.
+ * @returns {{sunrise: Date, sunset: Date}|null} Calculated sun times or null if
+ * the sun never rises/sets for the given latitude/date.
+ */
+function computeSunTimes(lat, lon, date = new Date()) {
+  if (!isFinite(lat) || !isFinite(lon)) return null;
+
+  const rad = Math.PI / 180;
+  const dayMs = 86400000;
+  const J1970 = 2440588;
+  const J2000 = 2451545;
+  const e = rad * 23.4397; // obliquity of the Earth
+
+  const toJulian = (d) => d.valueOf() / dayMs - 0.5 + J1970;
+  const fromJulian = (j) => new Date((j + 0.5 - J1970) * dayMs);
+  const toDays = (d) => toJulian(d) - J2000;
+
+  const solarMeanAnomaly = (d) => rad * (357.5291 + 0.98560028 * d);
+  const eclipticLongitude = (M) => {
+    const C = rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+    const P = rad * 102.9372; // perihelion of the Earth
+    return M + C + P + Math.PI;
+  };
+  const solarTransit = (ds, M, L) => J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
+  const sunDeclination = (L) => Math.asin(Math.sin(L) * Math.sin(e));
+  const hourAngle = (h, phi, dec) => Math.acos((Math.sin(h) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec)));
+
+  const lw = -lon * rad;
+  const phi = lat * rad;
+  const d = toDays(date);
+  const n = Math.round(d - lw / (2 * Math.PI));
+  const ds = n + lw / (2 * Math.PI);
+  const M = solarMeanAnomaly(ds);
+  const L = eclipticLongitude(M);
+  const dec = sunDeclination(L);
+  const Jnoon = solarTransit(ds, M, L);
+  const h0 = -0.83 * rad; // solar altitude at sunrise/sunset
+  const H = hourAngle(h0, phi, dec);
+  if (Number.isNaN(H)) return null;
+
+  const Jset = solarTransit(ds + H / (2 * Math.PI), M, L);
+  const Jrise = Jnoon - (Jset - Jnoon);
+
+  return { sunrise: fromJulian(Jrise), sunset: fromJulian(Jset) };
+}
+
+/**
  * Formats a date string into a short, localized weekday string.
  * @param {string} dStr The date string to format.
  * @returns {string} The formatted day string (e.g., "Mon").
@@ -459,6 +511,14 @@ async function loadForecast() {
  * @returns {Promise<void>} A promise that resolves when the sun times are loaded and rendered.
  */
 async function loadSunTimes() {
+  const applyComputedTimes = () => {
+    const computed = computeSunTimes(LAT, LON);
+    if (!computed) return false;
+    setText('sunrise', fmtTime(computed.sunrise));
+    setText('sunset', fmtTime(computed.sunset));
+    return true;
+  };
+
   try {
     const url = `https://r.jina.ai/https://api.sunrise-sunset.org/json?lat=${LAT}&lng=${LON}&formatted=0`;
     const data = await fetch(url).then(r => r.json());
@@ -466,8 +526,10 @@ async function loadSunTimes() {
     const ss = data?.results?.sunset;
     if (sr) setText('sunrise', fmtTime(sr));
     if (ss) setText('sunset', fmtTime(ss));
+    if (!sr || !ss) applyComputedTimes();
   } catch (err) {
     console.warn('Sun times fetch failed', err);
+    applyComputedTimes();
   }
 }
 
