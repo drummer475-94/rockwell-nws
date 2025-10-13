@@ -672,10 +672,10 @@ function renderLongRange(periods) {
   cont.classList.remove('loading');
 }
 
-// --- Lake Levels (High Rock & Tuckertown) ---
+// --- Lake Levels (High Rock only) ---
 const USGS_HIGHROCK_SITE = '02122500';
 const USGS_HIGHROCK_DATUM_FT = 558.68; // NGVD29 (USGS inventory)
-const FULL_POND = { highrock: 655, tuckertown: 596 };
+const FULL_POND_HIGHROCK = 655;
 
 /**
  * Fetches the latest High Rock Lake level from the USGS.
@@ -698,8 +698,8 @@ async function fetchHighRockFromUSGS(){
 }
 
 /**
- * Fetches lake levels for High Rock and Tuckertown from Cube Carolinas' website by scraping the HTML.
- * @returns {Promise<object>} A promise that resolves to an object containing highrock and tuckertown level data, or null values on failure.
+ * Fetches lake levels for High Rock from Cube Carolinas' website by scraping the HTML.
+ * @returns {Promise<object>} A promise that resolves to an object containing highrock level data, or null value on failure.
  */
 async function fetchFromCube(){
   const candidates = [
@@ -765,24 +765,22 @@ async function fetchFromCube(){
       return candidate ?? null;
     };
     return {
-      hr: find(['High Rock Lake', 'High Rock'], FULL_POND?.highrock),
-      tt: find(['Tuckertown Lake', 'Tuckertown'], FULL_POND?.tuckertown)
+      hr: find(['High Rock Lake', 'High Rock'], FULL_POND_HIGHROCK)
     };
   };
   for (const url of candidates) {
     try {
       const html = await fetch(url).then(r => r.text());
       if (!html) continue;
-      const { hr, tt } = parse(html);
+      const { hr } = parse(html);
       const now = new Date().toISOString();
       const result = {
-        highrock: hr != null ? { value: +(+hr).toFixed(2), when: now, src: 'Cube Carolinas' } : null,
-        tuckertown: tt != null ? { value: +(+tt).toFixed(2), when: now, src: 'Cube Carolinas' } : null
+        highrock: hr != null ? { value: +(+hr).toFixed(2), when: now, src: 'Cube Carolinas' } : null
       };
-      if (result.highrock || result.tuckertown) return result;
+      if (result.highrock) return result;
     } catch(err){ console.warn('Cube levels fetch failed', url, err); }
   }
-  return { highrock: null, tuckertown: null };
+  return { highrock: null };
 }
 
 /**
@@ -799,8 +797,8 @@ async function fetchHighRockFromNOAA(){
 }
 
 /**
- * Renders the lake levels into the UI.
- * @param {object} vals An object containing `highrock` and `tuckertown` lake level data.
+ * Renders the lake levels into the UI (High Rock only).
+ * @param {object} vals An object containing `highrock` lake level data.
  */
 function renderLakeLevels(vals){
   const cont = $('lakes');
@@ -847,8 +845,7 @@ function renderLakeLevels(vals){
 
     cont.appendChild(div);
   };
-  addRow('High Rock Lake', vals.highrock, FULL_POND.highrock);
-  addRow('Tuckertown Lake', vals.tuckertown, FULL_POND.tuckertown);
+  addRow('High Rock Lake', vals.highrock, FULL_POND_HIGHROCK);
 }
 
 /**
@@ -857,11 +854,10 @@ function renderLakeLevels(vals){
  * @returns {Promise<void>} A promise that resolves when the lake levels are loaded and rendered.
  */
 async function loadLakeLevels(){
-  const vals = { highrock: null, tuckertown: null };
-  // Try operator site first for both
+  const vals = { highrock: null };
+  // Try operator site first for High Rock only
   const cube = await fetchFromCube();
   if (cube.highrock) vals.highrock = cube.highrock;
-  if (cube.tuckertown) vals.tuckertown = cube.tuckertown;
   // High Rock fallbacks
   if (!vals.highrock) vals.highrock = await fetchHighRockFromUSGS();
   if (!vals.highrock) vals.highrock = await fetchHighRockFromNOAA();
