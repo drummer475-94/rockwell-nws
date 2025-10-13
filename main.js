@@ -20,6 +20,7 @@ async function determineLocation() {
 }
 
 let map, marker, radarLayer;
+let currentLayerType = 'radar'; // radar | satellite | clouds | temp
 
 /**
  * Initializes the Leaflet map, adds a tile layer from OpenStreetMap,
@@ -47,6 +48,32 @@ function initMap() {
   }).addTo(map).bindPopup('Loading location…');
 }
 
+/**
+ * Gets the static layer URL based on layer type
+ */
+function getStaticLayerUrl(layerType) {
+  const urls = {
+    radar: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
+    satellite: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-VIS-0/{z}/{x}/{y}.png',
+    clouds: 'https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY',
+    temp: 'https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY'
+  };
+  return urls[layerType] || urls.radar;
+}
+
+/**
+ * Gets attribution text for the current layer
+ */
+function getLayerAttribution(layerType) {
+  const attrs = {
+    radar: 'Animated: RainViewer • Static: NEXRAD (Iowa State Mesonet)',
+    satellite: 'Animated: RainViewer Satellite • Static: GOES (Iowa State Mesonet)',
+    clouds: 'Animated: RainViewer Clouds • Static: OpenWeatherMap',
+    temp: 'Animated: RainViewer Temp • Static: OpenWeatherMap'
+  };
+  return attrs[layerType] || attrs.radar;
+}
+
 // --- RainViewer animated radar (frames + controls) ---
 let rainFrames = [];
 let rainLayer = null;
@@ -65,31 +92,39 @@ let LAYER_OPACITY = 0.6;
 let TILE_SIZE = 256;
 
 /**
- * Constructs the URL for a RainViewer radar tile.
+ * Constructs the URL for a RainViewer tile based on layer type.
  * @param {number} t - The timestamp for the radar frame.
  * @param {number} [size=TILE_SIZE] - The size of the tile (256 or 512).
- * @returns {string} The URL for the radar tile.
+ * @param {string} [layerType=currentLayerType] - The type of layer (radar, satellite, clouds, temp).
+ * @returns {string} The URL for the tile.
  */
-function rvFrameUrl(t, size = TILE_SIZE){
-  return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
+function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
+  const layerPaths = {
+    radar: `radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`,
+    satellite: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`,
+    clouds: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`, // infrared
+    temp: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`
+  };
+  const path = layerPaths[layerType] || layerPaths.radar;
+  return `https://tilecache.rainviewer.com/v2/${path}`;
 }
 
 /**
  * Ensures the RainViewer layer is created and returns it.
  * If the layer doesn't exist, it creates it.
- * @returns {L.TileLayer} The Leaflet tile layer for the animated radar.
+ * @returns {L.TileLayer} The Leaflet tile layer for the animated layer.
  */
 function ensureRainLayer(){
   if (!rainLayer) {
     const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
     if (TILE_SIZE === 512) opts.zoomOffset = -1;
-    rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0, TILE_SIZE), opts);
+    rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0, TILE_SIZE, currentLayerType), opts);
   }
   return rainLayer;
 }
 
 /**
- * Sets the opacity for both the static and animated radar layers.
+ * Sets the opacity for both the static and animated layers.
  * @param {number} v - The opacity value (0.0 to 1.0).
  */
 function setRadarOpacity(v){
@@ -99,7 +134,43 @@ function setRadarOpacity(v){
 }
 
 /**
- * Displays a specific frame of the animated radar.
+ * Changes the layer type (radar, satellite, clouds, temp)
+ */
+function setLayerType(layerType) {
+  const wasPlaying = isPlaying;
+  if (wasPlaying) pause();
+  
+  currentLayerType = layerType;
+  
+  // Update attribution
+  const attrEl = document.getElementById('layerAttribution');
+  if (attrEl) attrEl.textContent = getLayerAttribution(layerType);
+  
+  // Remove existing layers
+  if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
+  if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+  
+  // Create new static layer
+  radarLayer = L.tileLayer(getStaticLayerUrl(layerType), {
+    opacity: LAYER_OPACITY,
+    zIndex: 500,
+    attribution: getLayerAttribution(layerType)
+  });
+  
+  // Recreate animated layer if frames exist
+  if (rainFrames.length) {
+    rainLayer = null;
+    showFrame(frameIndex);
+  }
+  
+  // Reapply current mode
+  setMode(currentMode);
+  
+  if (wasPlaying) play();
+}
+
+/**
+ * Displays a specific frame of the animated layer.
  * @param {number} i - The index of the frame to show.
  */
 function showFrame(i){
@@ -107,11 +178,11 @@ function showFrame(i){
   frameIndex = (i + rainFrames.length) % rainFrames.length;
   const t = rainFrames[frameIndex];
   if (rainLayer) {
-    rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE));
+    rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE, currentLayerType));
   } else {
     const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
     if (TILE_SIZE === 512) opts.zoomOffset = -1;
-    rainLayer = L.tileLayer(rvFrameUrl(t, TILE_SIZE), opts);
+    rainLayer = L.tileLayer(rvFrameUrl(t, TILE_SIZE, currentLayerType), opts);
     if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
   }
   const slider = document.getElementById('frameSlider');
@@ -121,7 +192,7 @@ function showFrame(i){
 }
 
 /**
- * Starts the radar animation.
+ * Starts the layer animation.
  */
 function play(){
   if (animTimer || !rainFrames.length) return;
@@ -130,7 +201,7 @@ function play(){
 }
 
 /**
- * Pauses the radar animation.
+ * Pauses the layer animation.
  */
 function pause(){
   isPlaying = false; updatePlayBtn();
@@ -146,32 +217,33 @@ function updatePlayBtn(){
 }
 
 /**
- * Sets the radar mode and updates the map layers accordingly.
- * @param {('auto'|'animated'|'static'|'off')} mode - The desired radar mode.
+ * Sets the display mode and updates the map layers accordingly.
+ * @param {('auto'|'animated'|'static'|'off')} mode - The desired display mode.
  */
 function setMode(mode){
   currentMode = mode;
+  const layerName = currentLayerType.charAt(0).toUpperCase() + currentLayerType.slice(1);
   // Remove/add layers per mode
   if (mode === 'off') {
     if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
     if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
-    document.getElementById('radarDiag').textContent = 'Radar off';
+    document.getElementById('radarDiag').textContent = 'Layer off';
     return;
   }
   if (mode === 'static') {
     if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
     if (radarLayer && !map.hasLayer(radarLayer)) radarLayer.addTo(map);
-    document.getElementById('radarDiag').textContent = 'Static NEXRAD tiles';
+    document.getElementById('radarDiag').textContent = `Static ${layerName} tiles`;
     return;
   }
   // animated or auto -> prefer RainViewer frames if available
   if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
   if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
-  document.getElementById('radarDiag').textContent = `Animated RainViewer • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
+  document.getElementById('radarDiag').textContent = `Animated ${layerName} • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
 }
 
 /**
- * Sets the resolution of the radar tiles.
+ * Sets the resolution of the tiles.
  * @param {number} size - The tile size (256 for standard, 512 for HD).
  */
 function setResolution(size){
@@ -192,14 +264,16 @@ function setResolution(size){
 }
 
 /**
- * Fetches radar frame data from the RainViewer API and initializes the animation controls.
- * @returns {Promise<void>} A promise that resolves when the radar animation is initialized.
+ * Fetches frame data from the RainViewer API and initializes the animation controls.
+ * @returns {Promise<void>} A promise that resolves when the animation is initialized.
  */
 async function initRadarAnimation(){
   try {
     const res = await fetch('https://tilecache.rainviewer.com/api/maps.json');
     const data = await res.json();
     let frames = [];
+    
+    // RainViewer provides both radar and satellite imagery
     if (data && data.radar) {
       const past = Array.isArray(data.radar.past) ? data.radar.past : [];
       const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
@@ -225,17 +299,20 @@ async function initRadarAnimation(){
       // Hide certain controls if frames unavailable
       const controls = document.getElementById('radarControls');
       if (controls) controls.style.opacity = '0.6';
-      document.getElementById('radarDiag').textContent = 'RainViewer frames unavailable; showing static NEXRAD.';
+      document.getElementById('radarDiag').textContent = 'RainViewer frames unavailable; showing static layer.';
       setMode('static');
     }
   } catch (e) {
     console.error('RainViewer init failed', e);
-    document.getElementById('radarDiag').textContent = 'Animated radar failed; showing static NEXRAD.';
+    document.getElementById('radarDiag').textContent = 'Animated layer failed; showing static layer.';
     setMode('static');
   }
 }
 
-// UI wire-up for radar controls
+// UI wire-up for layer controls
+document.getElementById('layerSelect')?.addEventListener('change', (e) => {
+  setLayerType(e.target.value);
+});
 document.getElementById('playBtn')?.addEventListener('click', () => {
   if (isPlaying) pause(); else play();
 });

@@ -153,6 +153,15 @@
         <div id="radar" aria-label="Radar map"></div>
         <div id="radarControls" class="row radarControls" style="margin-top:10px; gap:10px">
           <div class="row" style="gap:8px">
+            <span class="label">Layer</span>
+            <select id="layerSelect" class="btn sm" style="padding:6px 10px">
+              <option value="radar">Radar</option>
+              <option value="satellite">Satellite</option>
+              <option value="clouds">Clouds</option>
+              <option value="temp">Temperature</option>
+            </select>
+          </div>
+          <div class="row" style="gap:8px">
             <span class="label">Mode</span>
             <button data-mode="auto" class="btn sm" id="modeAuto">Auto</button>
             <button data-mode="animated" class="btn sm" id="modeAnim">Animated</button>
@@ -190,9 +199,7 @@
           <button id="playBtn" class="btn" aria-label="Play/Pause radar animation">Play</button>
         </div>
         <div class="footnote attribution" style="margin-top:8px">
-          <span>Animated tiles: RainViewer</span>
-          <span>•</span>
-          <span>Static fallback: NEXRAD (Iowa State Mesonet)</span>
+          <span id="layerAttribution">Animated tiles: RainViewer • Static: NEXRAD (Iowa State Mesonet)</span>
           <span>•</span>
           <span>Map © OpenStreetMap</span>
           <span>•</span>
