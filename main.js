@@ -76,6 +76,7 @@ function getLayerAttribution(layerType) {
 
 // --- RainViewer animated radar (frames + controls) ---
 let rainFrames = [];
+let satelliteFrames = [];
 let rainLayer = null;
 let frameIndex = 0;
 let animTimer = null;
@@ -99,14 +100,13 @@ let TILE_SIZE = 256;
  * @returns {string} The URL for the tile.
  */
 function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
-  const layerPaths = {
-    radar: `radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`,
-    satellite: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`,
-    clouds: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`, // infrared
-    temp: `satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`
-  };
-  const path = layerPaths[layerType] || layerPaths.radar;
-  return `https://tilecache.rainviewer.com/v2/${path}`;
+  if (layerType === 'radar') {
+    return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
+  } else {
+    // satellite, clouds, temp all use satellite endpoint with different color schemes
+    const colorScheme = layerType === 'clouds' ? '0/0_1' : '0/0_0'; // 0_1 for infrared, 0_0 for visible
+    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/${colorScheme}.png`;
+  }
 }
 
 /**
@@ -116,9 +116,11 @@ function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
  */
 function ensureRainLayer(){
   if (!rainLayer) {
+    const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+    const timestamp = frames[frameIndex] || 0;
     const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
     if (TILE_SIZE === 512) opts.zoomOffset = -1;
-    rainLayer = L.tileLayer(rvFrameUrl(rainFrames[frameIndex] || 0, TILE_SIZE, currentLayerType), opts);
+    rainLayer = L.tileLayer(rvFrameUrl(timestamp, TILE_SIZE, currentLayerType), opts);
   }
   return rainLayer;
 }
@@ -157,9 +159,13 @@ function setLayerType(layerType) {
     attribution: getLayerAttribution(layerType)
   });
   
-  // Recreate animated layer if frames exist
-  if (rainFrames.length) {
+  // Reset frame index and recreate animated layer if frames exist
+  const frames = layerType === 'radar' ? rainFrames : satelliteFrames;
+  if (frames.length) {
     rainLayer = null;
+    frameIndex = frames.length - 1; // Start at most recent frame
+    const slider = document.getElementById('frameSlider');
+    if (slider) slider.max = String(frames.length - 1);
     showFrame(frameIndex);
   }
   
@@ -174,9 +180,10 @@ function setLayerType(layerType) {
  * @param {number} i - The index of the frame to show.
  */
 function showFrame(i){
-  if (!rainFrames.length) return;
-  frameIndex = (i + rainFrames.length) % rainFrames.length;
-  const t = rainFrames[frameIndex];
+  const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+  if (!frames.length) return;
+  frameIndex = (i + frames.length) % frames.length;
+  const t = frames[frameIndex];
   if (rainLayer) {
     rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE, currentLayerType));
   } else {
@@ -195,7 +202,8 @@ function showFrame(i){
  * Starts the layer animation.
  */
 function play(){
-  if (animTimer || !rainFrames.length) return;
+  const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+  if (animTimer || !frames.length) return;
   isPlaying = true; updatePlayBtn();
   animTimer = setInterval(() => showFrame(frameIndex + 1), FRAME_INTERVAL);
 }
@@ -239,7 +247,8 @@ function setMode(mode){
   // animated or auto -> prefer RainViewer frames if available
   if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
   if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
-  document.getElementById('radarDiag').textContent = `Animated ${layerName} • ${rainFrames.length} frames @ ${FRAME_INTERVAL}ms`;
+  const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+  document.getElementById('radarDiag').textContent = `Animated ${layerName} • ${frames.length} frames @ ${FRAME_INTERVAL}ms`;
 }
 
 /**
@@ -271,23 +280,30 @@ async function initRadarAnimation(){
   try {
     const res = await fetch('https://tilecache.rainviewer.com/api/maps.json');
     const data = await res.json();
-    let frames = [];
     
     // RainViewer provides both radar and satellite imagery
+    // Extract radar frames
     if (data && data.radar) {
       const past = Array.isArray(data.radar.past) ? data.radar.past : [];
       const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
-      frames = past.concat(nowc).map(f => f.time).filter(Boolean);
+      const frames = past.concat(nowc).map(f => f.time).filter(Boolean);
+      rainFrames = frames.slice(-MAX_FRAMES);
     } else if (Array.isArray(data)) {
-      frames = data; // older API shape
+      rainFrames = data.slice(-MAX_FRAMES); // older API shape
     }
-    // Keep only the most recent MAX_FRAMES frames (past+nowcast)
-    rainFrames = frames.slice(-MAX_FRAMES);
+    
+    // Extract satellite frames
+    if (data && data.satellite && data.satellite.infrared) {
+      const satFrames = Array.isArray(data.satellite.infrared) ? data.satellite.infrared : [];
+      satelliteFrames = satFrames.map(f => f.time).filter(Boolean).slice(-MAX_FRAMES);
+    }
 
     const slider = document.getElementById('frameSlider');
-    if (rainFrames.length && slider) {
-      slider.max = String(rainFrames.length - 1);
-      showFrame(rainFrames.length - 1);
+    const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+    
+    if (frames.length && slider) {
+      slider.max = String(frames.length - 1);
+      showFrame(frames.length - 1);
       // Prefer animated layer by default in auto mode
       setMode(currentMode);
       // If animated is available, drop static to avoid double overlay
