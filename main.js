@@ -1,4 +1,4 @@
-// --- Location (default Rockwell, NC; overridden by geolocation) ---
+﻿// --- Location (default Rockwell, NC; overridden by geolocation) ---
 let LAT = 35.551;   // Rockwell, NC approx
 let LON = -80.407;
 
@@ -21,6 +21,43 @@ async function determineLocation() {
 
 let map, marker, radarLayer;
 let currentLayerType = 'radar'; // radar | satellite | clouds | temp
+
+const VALID_LAYER_TYPES = ['radar', 'satellite', 'clouds', 'temp'];
+const LAYER_ALIASES = {
+  radar: 'radar',
+  precip: 'radar',
+  precipitation: 'radar',
+  rain: 'radar',
+  satellite: 'satellite',
+  visible: 'satellite',
+  vis: 'satellite',
+  clouds: 'clouds',
+  cloud: 'clouds',
+  ir: 'clouds',
+  infrared: 'clouds',
+  temp: 'temp',
+  temperature: 'temp'
+};
+const LAYER_DISPLAY_NAMES = {
+  radar: 'Precip',
+  satellite: 'Satellite',
+  clouds: 'Clouds',
+  temp: 'Temperature'
+};
+
+function normalizeLayerType(layerType) {
+  if (!layerType) return 'radar';
+  const key = String(layerType).toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(LAYER_ALIASES, key)) {
+    return LAYER_ALIASES[key];
+  }
+  return VALID_LAYER_TYPES.includes(key) ? key : 'radar';
+}
+
+function getLayerDisplayName(layerType) {
+  const normalized = normalizeLayerType(layerType);
+  return LAYER_DISPLAY_NAMES[normalized] || (normalized.charAt(0).toUpperCase() + normalized.slice(1));
+}
 
 /**
  * Initializes the Leaflet map, adds a tile layer from OpenStreetMap,
@@ -52,26 +89,28 @@ function initMap() {
  * Gets the static layer URL based on layer type
  */
 function getStaticLayerUrl(layerType) {
+  const normalized = normalizeLayerType(layerType);
   const urls = {
     radar: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
     satellite: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-VIS-0/{z}/{x}/{y}.png',
     clouds: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png',
     temp: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png'
   };
-  return urls[layerType] || urls.radar;
+  return urls[normalized] || urls.radar;
 }
 
 /**
  * Gets attribution text for the current layer
  */
 function getLayerAttribution(layerType) {
+  const normalized = normalizeLayerType(layerType);
   const attrs = {
-    radar: 'Animated: RainViewer • Static: NEXRAD (Iowa State Mesonet)',
-    satellite: 'Animated: RainViewer Satellite • Static: GOES Visible (Iowa State Mesonet)',
-    clouds: 'Animated: RainViewer Infrared • Static: GOES IR (Iowa State Mesonet)',
-    temp: 'Animated: RainViewer Infrared • Static: GOES IR (Iowa State Mesonet)'
+    radar: 'Animated: RainViewer - Static: NEXRAD (Iowa State Mesonet)',
+    satellite: 'Animated: RainViewer Satellite - Static: GOES Visible (Iowa State Mesonet)',
+    clouds: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)',
+    temp: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)'
   };
-  return attrs[layerType] || attrs.radar;
+  return attrs[normalized] || attrs.radar;
 }
 
 // --- RainViewer animated radar (frames + controls) ---
@@ -100,18 +139,46 @@ let TILE_SIZE = 256;
  * @returns {string} The URL for the tile.
  */
 function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
-  if (layerType === 'radar') {
+  const normalized = normalizeLayerType(layerType);
+  if (normalized === 'radar') {
     return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
-  } else if (layerType === 'satellite') {
+  } else if (normalized === 'satellite') {
     // RainViewer satellite - visible light (0_0 = visible)
     return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`;
-  } else if (layerType === 'clouds') {
+  } else if (normalized === 'clouds') {
     // RainViewer satellite - infrared for cloud detection (0_1 = infrared)
     return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
   } else {
     // temp - use infrared satellite
     return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
   }
+}
+
+function extractFrameTimes(source){
+  const times = [];
+  const visit = (val) => {
+    if (!val) return;
+    if (Array.isArray(val)) {
+      for (const item of val) visit(item);
+      return;
+    }
+    if (typeof val === 'object') {
+      if (Object.prototype.hasOwnProperty.call(val, 'time')) {
+        const num = Number(val.time);
+        if (Number.isFinite(num)) times.push(num);
+      }
+      for (const value of Object.values(val)) visit(value);
+      return;
+    }
+    if (typeof val === 'number' || typeof val === 'string') {
+      const num = Number(val);
+      if (Number.isFinite(num)) times.push(num);
+    }
+  };
+  visit(source);
+  const uniq = Array.from(new Set(times.filter(Number.isFinite)));
+  uniq.sort((a, b) => a - b);
+  return uniq;
 }
 
 /**
@@ -146,26 +213,28 @@ function setRadarOpacity(v){
 function setLayerType(layerType) {
   const wasPlaying = isPlaying;
   if (wasPlaying) pause();
-  
-  currentLayerType = layerType;
-  
+
+  const normalized = normalizeLayerType(layerType);
+  currentLayerType = normalized;
+
   // Update attribution
   const attrEl = document.getElementById('layerAttribution');
-  if (attrEl) attrEl.textContent = getLayerAttribution(layerType);
+  if (attrEl) attrEl.textContent = getLayerAttribution(normalized);
   
   // Remove existing layers
   if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
   if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
   
   // Create new static layer
-  radarLayer = L.tileLayer(getStaticLayerUrl(layerType), {
+  const attrText = getLayerAttribution(normalized);
+  radarLayer = L.tileLayer(getStaticLayerUrl(normalized), {
     opacity: LAYER_OPACITY,
     zIndex: 500,
-    attribution: getLayerAttribution(layerType)
+    attribution: attrText
   });
   
   // Reset frame index and recreate animated layer if frames exist
-  const frames = layerType === 'radar' ? rainFrames : satelliteFrames;
+  const frames = normalized === 'radar' ? rainFrames : satelliteFrames;
   if (frames && frames.length > 0) {
     rainLayer = null;
     frameIndex = frames.length - 1; // Start at most recent frame
@@ -173,6 +242,7 @@ function setLayerType(layerType) {
     if (slider) {
       slider.max = String(frames.length - 1);
       slider.value = String(frameIndex);
+      slider.disabled = false;
     }
     showFrame(frameIndex);
   } else {
@@ -180,6 +250,11 @@ function setLayerType(layerType) {
     if (currentMode === 'animated' || currentMode === 'auto') {
       setMode('static');
       return;
+    }
+    const slider = document.getElementById('frameSlider');
+    if (slider) {
+      slider.value = '0';
+      slider.disabled = true;
     }
   }
   
@@ -247,7 +322,7 @@ function updatePlayBtn(){
  */
 function setMode(mode){
   currentMode = mode;
-  const layerName = currentLayerType.charAt(0).toUpperCase() + currentLayerType.slice(1);
+  const layerName = getLayerDisplayName(currentLayerType);
   // Remove/add layers per mode
   if (mode === 'off') {
     if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
@@ -265,7 +340,7 @@ function setMode(mode){
   if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
   if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
   const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-  document.getElementById('radarDiag').textContent = `Animated ${layerName} • ${frames.length} frames @ ${FRAME_INTERVAL}ms`;
+  document.getElementById('radarDiag').textContent = `Animated ${layerName} - ${frames.length} frames @ ${FRAME_INTERVAL}ms`;
 }
 
 /**
@@ -295,37 +370,87 @@ function setResolution(size){
  */
 async function initRadarAnimation(){
   try {
-    const res = await fetch('https://tilecache.rainviewer.com/api/maps.json');
-    const data = await res.json();
+    const radarRes = await fetch('https://tilecache.rainviewer.com/api/maps.json');
+    if (!radarRes.ok) {
+      // Try to read response text for more info
+      let bodyText = '<no body>';
+      try { bodyText = await radarRes.text(); } catch (e) { /* ignore */ }
+      console.error('RainViewer API returned non-OK', radarRes.status, bodyText);
+      const diag = document.getElementById('radarDiag');
+      if (diag) diag.textContent = `RainViewer API error ${radarRes.status}: ${String(bodyText).slice(0,200)}`;
+      // fall back to static tiles
+      setMode('static');
+      return;
+    }
+    let data;
+    try {
+      data = await radarRes.json();
+    } catch (jsonErr) {
+      let bodyText = '<unreadable body>';
+      try { bodyText = await radarRes.text(); } catch (e) { /* ignore */ }
+      console.error('RainViewer JSON parse failed', jsonErr, bodyText);
+      const diag = document.getElementById('radarDiag');
+      if (diag) diag.textContent = `RainViewer returned invalid JSON`;
+      setMode('static');
+      return;
+    }
     
     // RainViewer provides both radar and satellite imagery
     // Extract radar frames
     if (data && data.radar) {
       const past = Array.isArray(data.radar.past) ? data.radar.past : [];
       const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
-      const frames = past.concat(nowc).map(f => f.time).filter(Boolean);
+      const frames = past.concat(nowc).map(f => Number(f.time)).filter(Number.isFinite);
+      frames.sort((a, b) => a - b);
       rainFrames = frames.slice(-MAX_FRAMES);
       console.log(`Loaded ${rainFrames.length} radar frames`);
     } else if (Array.isArray(data)) {
-      rainFrames = data.slice(-MAX_FRAMES); // older API shape
+      const frames = data.map(Number).filter(Number.isFinite);
+      frames.sort((a, b) => a - b);
+      rainFrames = frames.slice(-MAX_FRAMES); // older API shape
       console.log(`Loaded ${rainFrames.length} radar frames (legacy API)`);
+    } else {
+      rainFrames = [];
+      console.warn('RainViewer radar response missing expected data');
     }
     
     // Extract satellite frames (used for satellite, clouds, and temp layers)
-    if (data && data.satellite && data.satellite.infrared) {
-      const satFrames = Array.isArray(data.satellite.infrared) ? data.satellite.infrared : [];
-      satelliteFrames = satFrames.map(f => f.time).filter(Boolean).slice(-MAX_FRAMES);
-      console.log(`Loaded ${satelliteFrames.length} satellite frames`);
-    } else {
-      console.warn('No satellite data available from RainViewer API');
-      satelliteFrames = [];
+    // RainViewer's `maps.json` can expose satellite frames under different keys
+    // (e.g. infrared, visible, waterVapor) or in slightly different shapes.
+    // Fall back to satellite.json if necessary.
+    let satelliteTimes = [];
+    try {
+      if (data && data.satellite) {
+        satelliteTimes = extractFrameTimes(data.satellite);
+      }
+      if (!satelliteTimes.length) {
+        const satelliteRes = await fetch('https://tilecache.rainviewer.com/api/satellite.json');
+        if (satelliteRes.ok) {
+          const satelliteData = await satelliteRes.json();
+          satelliteTimes = extractFrameTimes(satelliteData);
+        } else {
+          console.warn('RainViewer satellite API returned non-OK', satelliteRes.status);
+        }
+      }
+    } catch (satErr) {
+      console.warn('Error extracting satellite frames', satErr);
+      satelliteTimes = [];
     }
+    satelliteTimes.sort((a, b) => a - b);
+    satelliteFrames = satelliteTimes.slice(-MAX_FRAMES);
+    console.log(`Loaded ${satelliteFrames.length} satellite frames`);
 
     const slider = document.getElementById('frameSlider');
     const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
+    const controls = document.getElementById('radarControls');
+    const diagEl = document.getElementById('radarDiag');
+    const hasFrames = Array.isArray(frames) && frames.length > 0;
     
-    if (frames && frames.length > 0 && slider) {
-      slider.max = String(frames.length - 1);
+    if (hasFrames) {
+      if (slider) {
+        slider.max = String(frames.length - 1);
+        slider.disabled = false;
+      }
       showFrame(frames.length - 1);
       // Prefer animated layer by default in auto mode
       setMode(currentMode);
@@ -333,17 +458,22 @@ async function initRadarAnimation(){
       if (typeof radarLayer !== 'undefined' && map.hasLayer(radarLayer) && (currentMode === 'animated' || currentMode === 'auto')) {
         map.removeLayer(radarLayer);
       }
-      document.getElementById('radarDiag').textContent = `Radar: ${rainFrames.length} frames • Satellite: ${satelliteFrames.length} frames`;
+      if (diagEl) diagEl.textContent = `Radar frames: ${rainFrames.length} | Satellite frames: ${satelliteFrames.length}`;
+      if (controls) controls.style.opacity = '1';
     } else {
       // Hide certain controls if frames unavailable
-      const controls = document.getElementById('radarControls');
       if (controls) controls.style.opacity = '0.6';
-      document.getElementById('radarDiag').textContent = `RainViewer frames unavailable for ${currentLayerType}; showing static layer.`;
+      if (slider) {
+        slider.value = '0';
+        slider.disabled = true;
+      }
+      if (diagEl) diagEl.textContent = `RainViewer frames unavailable for ${getLayerDisplayName(currentLayerType)}; showing static layer.`;
       setMode('static');
     }
   } catch (e) {
     console.error('RainViewer init failed', e);
-    document.getElementById('radarDiag').textContent = 'Animated layer failed; showing static layer.';
+    const diag = document.getElementById('radarDiag');
+    if (diag) diag.textContent = `RainViewer init failed: ${e && e.message ? e.message : String(e)}`;
     setMode('static');
   }
 }
@@ -570,7 +700,7 @@ async function loadForecast() {
     const state = points?.properties?.relativeLocation?.properties?.state;
     const locName = city && state ? `${city}, ${state}` : `${LAT.toFixed(2)}, ${LON.toFixed(2)}`;
     setText('location', locName);
-    document.title = `${locName} • NWS Forecast`;
+    document.title = `${locName} - NWS Forecast`;
     const radarEl = $('radar');
     if (radarEl) radarEl.setAttribute('aria-label', `Radar map for ${locName}`);
     if (marker) marker.bindPopup(locName);
@@ -707,7 +837,7 @@ function renderHourly(periods) {
     div.innerHTML = `
       <div class="top">
         <div>
-          <div class="muted">${fmtDay(p.startTime)} • ${fmtTime(p.startTime)}</div>
+          <div class="muted">${fmtDay(p.startTime)} - ${fmtTime(p.startTime)}</div>
           <div class="temp">${Math.round(p.temperature)}°F</div>
         </div>
         ${icon}
@@ -1007,3 +1137,13 @@ async function init() {
 
 // Run on page load
 init();
+
+
+
+
+
+
+
+
+
+
