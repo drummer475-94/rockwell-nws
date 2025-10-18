@@ -190,8 +190,17 @@ function ensureRainLayer(){
   if (!rainLayer) {
     const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
     const timestamp = frames[frameIndex] || 0;
-    const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
-    if (TILE_SIZE === 512) opts.zoomOffset = -1;
+    const opts = { 
+      opacity: LAYER_OPACITY, 
+      zIndex: 550,
+      tms: false,
+      attribution: ''
+    };
+    // For 512px tiles, we need to adjust zoom offset
+    if (TILE_SIZE === 512) {
+      opts.tileSize = 512;
+      opts.zoomOffset = -1;
+    }
     rainLayer = L.tileLayer(rvFrameUrl(timestamp, TILE_SIZE, currentLayerType), opts);
   }
   return rainLayer;
@@ -279,8 +288,17 @@ function showFrame(i){
   if (rainLayer && map.hasLayer(rainLayer)) {
     rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE, currentLayerType));
   } else {
-    const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
-    if (TILE_SIZE === 512) opts.zoomOffset = -1;
+    const opts = { 
+      opacity: LAYER_OPACITY, 
+      zIndex: 550,
+      tms: false,
+      attribution: ''
+    };
+    // For 512px tiles, we need to adjust zoom offset
+    if (TILE_SIZE === 512) {
+      opts.tileSize = 512;
+      opts.zoomOffset = -1;
+    }
     rainLayer = L.tileLayer(rvFrameUrl(t, TILE_SIZE, currentLayerType), opts);
     if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
   }
