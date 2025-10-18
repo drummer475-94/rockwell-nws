@@ -17,13 +17,13 @@ The NWS Forecast app now supports multiple weather visualization layers beyond j
 
 ### 3. **Clouds**
 - **Animated**: RainViewer infrared satellite imagery
-- **Static Fallback**: OpenWeatherMap cloud layer
+- **Static Fallback**: GOES infrared satellite from Iowa State Mesonet
 - **Best For**: Nighttime cloud tracking and temperature analysis
 
 ### 4. **Temperature**
-- **Animated**: RainViewer satellite temperature overlay
-- **Static Fallback**: OpenWeatherMap temperature layer
-- **Best For**: Temperature distribution patterns
+- **Animated**: RainViewer infrared satellite imagery
+- **Static Fallback**: GOES infrared satellite from Iowa State Mesonet
+- **Best For**: Temperature distribution patterns and cloud top temperatures
 
 ## How to Use
 
@@ -43,8 +43,11 @@ The NWS Forecast app now supports multiple weather visualization layers beyond j
 ## Data Sources
 
 - **RainViewer**: Primary source for animated radar and satellite data
-- **Iowa State Mesonet**: NEXRAD radar and GOES satellite static fallbacks
-- **OpenWeatherMap**: Additional cloud and temperature data (API key required for some features)
+  - Radar: Precipitation radar composite
+  - Satellite: Visible spectrum (0_0) and Infrared (0_1) imagery
+- **Iowa State Mesonet**: Static fallback layers
+  - NEXRAD radar composite (N0Q)
+  - GOES satellite visible and infrared channels
 
 ## Technical Notes
 

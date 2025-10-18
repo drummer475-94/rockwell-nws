@@ -55,8 +55,8 @@ function getStaticLayerUrl(layerType) {
   const urls = {
     radar: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
     satellite: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-VIS-0/{z}/{x}/{y}.png',
-    clouds: 'https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY',
-    temp: 'https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY'
+    clouds: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png',
+    temp: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png'
   };
   return urls[layerType] || urls.radar;
 }
@@ -67,9 +67,9 @@ function getStaticLayerUrl(layerType) {
 function getLayerAttribution(layerType) {
   const attrs = {
     radar: 'Animated: RainViewer • Static: NEXRAD (Iowa State Mesonet)',
-    satellite: 'Animated: RainViewer Satellite • Static: GOES (Iowa State Mesonet)',
-    clouds: 'Animated: RainViewer Clouds • Static: OpenWeatherMap',
-    temp: 'Animated: RainViewer Temp • Static: OpenWeatherMap'
+    satellite: 'Animated: RainViewer Satellite • Static: GOES Visible (Iowa State Mesonet)',
+    clouds: 'Animated: RainViewer Infrared • Static: GOES IR (Iowa State Mesonet)',
+    temp: 'Animated: RainViewer Infrared • Static: GOES IR (Iowa State Mesonet)'
   };
   return attrs[layerType] || attrs.radar;
 }
@@ -102,10 +102,15 @@ let TILE_SIZE = 256;
 function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
   if (layerType === 'radar') {
     return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
+  } else if (layerType === 'satellite') {
+    // RainViewer satellite - visible light (0_0 = visible)
+    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`;
+  } else if (layerType === 'clouds') {
+    // RainViewer satellite - infrared for cloud detection (0_1 = infrared)
+    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
   } else {
-    // satellite, clouds, temp all use satellite endpoint with different color schemes
-    const colorScheme = layerType === 'clouds' ? '0/0_1' : '0/0_0'; // 0_1 for infrared, 0_0 for visible
-    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/${colorScheme}.png`;
+    // temp - use infrared satellite
+    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
   }
 }
 
@@ -161,12 +166,21 @@ function setLayerType(layerType) {
   
   // Reset frame index and recreate animated layer if frames exist
   const frames = layerType === 'radar' ? rainFrames : satelliteFrames;
-  if (frames.length) {
+  if (frames && frames.length > 0) {
     rainLayer = null;
     frameIndex = frames.length - 1; // Start at most recent frame
     const slider = document.getElementById('frameSlider');
-    if (slider) slider.max = String(frames.length - 1);
+    if (slider) {
+      slider.max = String(frames.length - 1);
+      slider.value = String(frameIndex);
+    }
     showFrame(frameIndex);
+  } else {
+    // If no frames available, use static mode
+    if (currentMode === 'animated' || currentMode === 'auto') {
+      setMode('static');
+      return;
+    }
   }
   
   // Reapply current mode
@@ -181,10 +195,13 @@ function setLayerType(layerType) {
  */
 function showFrame(i){
   const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-  if (!frames.length) return;
+  if (!frames || frames.length === 0) {
+    console.warn(`No frames available for ${currentLayerType}`);
+    return;
+  }
   frameIndex = (i + frames.length) % frames.length;
   const t = frames[frameIndex];
-  if (rainLayer) {
+  if (rainLayer && map.hasLayer(rainLayer)) {
     rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE, currentLayerType));
   } else {
     const opts = { opacity: LAYER_OPACITY, zIndex: 550, tileSize: TILE_SIZE };
@@ -288,20 +305,26 @@ async function initRadarAnimation(){
       const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
       const frames = past.concat(nowc).map(f => f.time).filter(Boolean);
       rainFrames = frames.slice(-MAX_FRAMES);
+      console.log(`Loaded ${rainFrames.length} radar frames`);
     } else if (Array.isArray(data)) {
       rainFrames = data.slice(-MAX_FRAMES); // older API shape
+      console.log(`Loaded ${rainFrames.length} radar frames (legacy API)`);
     }
     
-    // Extract satellite frames
+    // Extract satellite frames (used for satellite, clouds, and temp layers)
     if (data && data.satellite && data.satellite.infrared) {
       const satFrames = Array.isArray(data.satellite.infrared) ? data.satellite.infrared : [];
       satelliteFrames = satFrames.map(f => f.time).filter(Boolean).slice(-MAX_FRAMES);
+      console.log(`Loaded ${satelliteFrames.length} satellite frames`);
+    } else {
+      console.warn('No satellite data available from RainViewer API');
+      satelliteFrames = [];
     }
 
     const slider = document.getElementById('frameSlider');
     const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
     
-    if (frames.length && slider) {
+    if (frames && frames.length > 0 && slider) {
       slider.max = String(frames.length - 1);
       showFrame(frames.length - 1);
       // Prefer animated layer by default in auto mode
@@ -310,12 +333,12 @@ async function initRadarAnimation(){
       if (typeof radarLayer !== 'undefined' && map.hasLayer(radarLayer) && (currentMode === 'animated' || currentMode === 'auto')) {
         map.removeLayer(radarLayer);
       }
-      document.getElementById('radarDiag').textContent = `Recommended max frames: ${RECOMMENDED_MAX_FRAMES} • Using: ${MAX_FRAMES}`;
+      document.getElementById('radarDiag').textContent = `Radar: ${rainFrames.length} frames • Satellite: ${satelliteFrames.length} frames`;
     } else {
       // Hide certain controls if frames unavailable
       const controls = document.getElementById('radarControls');
       if (controls) controls.style.opacity = '0.6';
-      document.getElementById('radarDiag').textContent = 'RainViewer frames unavailable; showing static layer.';
+      document.getElementById('radarDiag').textContent = `RainViewer frames unavailable for ${currentLayerType}; showing static layer.`;
       setMode('static');
     }
   } catch (e) {
