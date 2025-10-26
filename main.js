@@ -133,52 +133,84 @@ let TILE_SIZE = 256;
 
 /**
  * Constructs the URL for a RainViewer tile based on layer type.
- * @param {number} t - The timestamp for the radar frame.
+ * Radar frames use numeric timestamps, while RainViewer satellite frames now use hashed path IDs.
+ * @param {(number|string)} frameToken - Timestamp (radar) or hashed path (satellite products).
  * @param {number} [size=TILE_SIZE] - The size of the tile (256 or 512).
  * @param {string} [layerType=currentLayerType] - The type of layer (radar, satellite, clouds, temp).
  * @returns {string} The URL for the tile.
  */
-function rvFrameUrl(t, size = TILE_SIZE, layerType = currentLayerType){
+function rvFrameUrl(frameToken, size = TILE_SIZE, layerType = currentLayerType){
   const normalized = normalizeLayerType(layerType);
   if (normalized === 'radar') {
-    return `https://tilecache.rainviewer.com/v2/radar/${t}/${size}/{z}/{x}/{y}/2/1_1.png`;
-  } else if (normalized === 'satellite') {
-    // RainViewer satellite - visible light (0_0 = visible)
-    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_0.png`;
-  } else if (normalized === 'clouds') {
-    // RainViewer satellite - infrared for cloud detection (0_1 = infrared)
-    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
-  } else {
-    // temp - use infrared satellite
-    return `https://tilecache.rainviewer.com/v2/satellite/${t}/${size}/{z}/{x}/{y}/0/0_1.png`;
+    const ts = Number.isFinite(frameToken) ? frameToken : 0;
+    return `https://tilecache.rainviewer.com/v2/radar/${ts}/${size}/{z}/{x}/{y}/2/1_1.png`;
   }
+  const pathId = frameToken ? String(frameToken) : '0';
+  if (normalized === 'satellite') {
+    // RainViewer satellite - visible light (0_0 = visible)
+    return `https://tilecache.rainviewer.com/v2/satellite/${pathId}/${size}/{z}/{x}/{y}/0/0_0.png`;
+  }
+  // clouds & temp use infrared satellite tiles
+  return `https://tilecache.rainviewer.com/v2/satellite/${pathId}/${size}/{z}/{x}/{y}/0/0_1.png`;
 }
 
-function extractFrameTimes(source){
-  const times = [];
+function extractSatelliteFrames(source){
+  const frames = [];
   const visit = (val) => {
     if (!val) return;
     if (Array.isArray(val)) {
-      for (const item of val) visit(item);
+      val.forEach(visit);
       return;
     }
     if (typeof val === 'object') {
-      if (Object.prototype.hasOwnProperty.call(val, 'time')) {
-        const num = Number(val.time);
-        if (Number.isFinite(num)) times.push(num);
+      const path = typeof val.path === 'string' ? val.path : null;
+      const time = Number(val.time);
+      if (path) {
+        frames.push({
+          path,
+          time: Number.isFinite(time) ? time : null
+        });
       }
-      for (const value of Object.values(val)) visit(value);
-      return;
-    }
-    if (typeof val === 'number' || typeof val === 'string') {
-      const num = Number(val);
-      if (Number.isFinite(num)) times.push(num);
+      Object.values(val).forEach(visit);
     }
   };
   visit(source);
-  const uniq = Array.from(new Set(times.filter(Number.isFinite)));
-  uniq.sort((a, b) => a - b);
-  return uniq;
+  const seenPaths = new Set();
+  const deduped = [];
+  for (const frame of frames) {
+    if (!frame.path || seenPaths.has(frame.path)) continue;
+    seenPaths.add(frame.path);
+    deduped.push(frame);
+  }
+  deduped.sort((a, b) => {
+    const ta = Number.isFinite(a.time) ? a.time : 0;
+    const tb = Number.isFinite(b.time) ? b.time : 0;
+    return ta - tb;
+  });
+  return deduped;
+}
+
+function getFrameToken(frame, layerType){
+  const normalized = normalizeLayerType(layerType);
+  if (normalized === 'radar') {
+    if (Number.isFinite(frame)) return frame;
+    if (frame && Number.isFinite(frame.time)) return frame.time;
+    return null;
+  }
+  if (frame && typeof frame === 'object' && typeof frame.path === 'string') {
+    return frame.path;
+  }
+  if (typeof frame === 'string') return frame;
+  return null;
+}
+
+function getFrameTimestamp(frame){
+  if (Number.isFinite(frame)) return frame;
+  if (frame && typeof frame === 'object') {
+    const ts = Number(frame.time);
+    return Number.isFinite(ts) ? ts : null;
+  }
+  return null;
 }
 
 /**
@@ -189,7 +221,9 @@ function extractFrameTimes(source){
 function ensureRainLayer(){
   if (!rainLayer) {
     const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-    const timestamp = frames[frameIndex] || 0;
+    if (!frames || !frames.length) return null;
+    const token = getFrameToken(frames[frameIndex], currentLayerType);
+    if (token == null) return null;
     const opts = { 
       opacity: LAYER_OPACITY, 
       zIndex: 550,
@@ -201,7 +235,7 @@ function ensureRainLayer(){
       opts.tileSize = 512;
       opts.zoomOffset = -1;
     }
-    rainLayer = L.tileLayer(rvFrameUrl(timestamp, TILE_SIZE, currentLayerType), opts);
+    rainLayer = L.tileLayer(rvFrameUrl(token, TILE_SIZE, currentLayerType), opts);
   }
   return rainLayer;
 }
@@ -256,14 +290,16 @@ function setLayerType(layerType) {
     showFrame(frameIndex);
   } else {
     // If no frames available, use static mode
-    if (currentMode === 'animated' || currentMode === 'auto') {
-      setMode('static');
-      return;
-    }
     const slider = document.getElementById('frameSlider');
+    const label = document.getElementById('frameTime');
     if (slider) {
       slider.value = '0';
       slider.disabled = true;
+    }
+    if (label) label.textContent = '-';
+    if (currentMode === 'animated' || currentMode === 'auto') {
+      setMode('static');
+      return;
     }
   }
   
@@ -284,9 +320,16 @@ function showFrame(i){
     return;
   }
   frameIndex = (i + frames.length) % frames.length;
-  const t = frames[frameIndex];
+  const frame = frames[frameIndex];
+  const token = getFrameToken(frame, currentLayerType);
+  if (token == null) {
+    console.warn(`Missing frame token for ${currentLayerType} index ${frameIndex}`);
+    return;
+  }
+  const frameTime = getFrameTimestamp(frame);
+  const tileUrl = rvFrameUrl(token, TILE_SIZE, currentLayerType);
   if (rainLayer && map.hasLayer(rainLayer)) {
-    rainLayer.setUrl(rvFrameUrl(t, TILE_SIZE, currentLayerType));
+    rainLayer.setUrl(tileUrl);
   } else {
     const opts = { 
       opacity: LAYER_OPACITY, 
@@ -299,13 +342,15 @@ function showFrame(i){
       opts.tileSize = 512;
       opts.zoomOffset = -1;
     }
-    rainLayer = L.tileLayer(rvFrameUrl(t, TILE_SIZE, currentLayerType), opts);
+    rainLayer = L.tileLayer(tileUrl, opts);
     if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
   }
   const slider = document.getElementById('frameSlider');
   const label = document.getElementById('frameTime');
   if (slider) slider.value = String(frameIndex);
-  if (label) label.textContent = new Date(t * 1000).toLocaleString();
+  if (label) {
+    label.textContent = frameTime ? new Date(frameTime * 1000).toLocaleString() : 'Time unavailable';
+  }
 }
 
 /**
@@ -436,26 +481,25 @@ async function initRadarAnimation(){
     // RainViewer's `maps.json` can expose satellite frames under different keys
     // (e.g. infrared, visible, waterVapor) or in slightly different shapes.
     // Fall back to satellite.json if necessary.
-    let satelliteTimes = [];
+    let satFrames = [];
     try {
       if (data && data.satellite) {
-        satelliteTimes = extractFrameTimes(data.satellite);
+        satFrames = extractSatelliteFrames(data.satellite);
       }
-      if (!satelliteTimes.length) {
+      if (!satFrames.length) {
         const satelliteRes = await fetch('https://tilecache.rainviewer.com/api/satellite.json');
         if (satelliteRes.ok) {
           const satelliteData = await satelliteRes.json();
-          satelliteTimes = extractFrameTimes(satelliteData);
+          satFrames = extractSatelliteFrames(satelliteData);
         } else {
           console.warn('RainViewer satellite API returned non-OK', satelliteRes.status);
         }
       }
     } catch (satErr) {
       console.warn('Error extracting satellite frames', satErr);
-      satelliteTimes = [];
+      satFrames = [];
     }
-    satelliteTimes.sort((a, b) => a - b);
-    satelliteFrames = satelliteTimes.slice(-MAX_FRAMES);
+    satelliteFrames = satFrames.slice(-MAX_FRAMES);
     console.log(`Loaded ${satelliteFrames.length} satellite frames`);
 
     const slider = document.getElementById('frameSlider');
