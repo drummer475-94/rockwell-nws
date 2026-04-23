@@ -1,3 +1,136 @@
+// --- Location (default Rockwell, NC; overridden by geolocation) ---
+let LAT = 35.551;   // Rockwell, NC approx
+let LON = -80.407;
+
+/**
+ * Attempts to get the user's current location using the browser's geolocation API.
+ * If successful, it updates the global LAT and LON variables.
+ * If it fails or the API is unavailable, it does nothing and the default location is used.
+ * @returns {Promise<void>} A promise that resolves when the location has been determined.
+ */
+async function determineLocation() {
+  if (!('geolocation' in navigator)) return;
+  try {
+    const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject));
+    LAT = pos.coords.latitude;
+    LON = pos.coords.longitude;
+  } catch (err) {
+    console.warn('Geolocation failed', err);
+  }
+}
+
+let map, marker, radarLayer;
+let currentLayerType = 'radar'; // radar | satellite | clouds | temp
+
+const VALID_LAYER_TYPES = ['radar', 'satellite', 'clouds', 'temp'];
+const LAYER_ALIASES = {
+  radar: 'radar',
+  precip: 'radar',
+  precipitation: 'radar',
+  rain: 'radar',
+  satellite: 'satellite',
+  visible: 'satellite',
+  vis: 'satellite',
+  clouds: 'clouds',
+  cloud: 'clouds',
+  ir: 'clouds',
+  infrared: 'clouds',
+  temp: 'temp',
+  temperature: 'temp'
+};
+const LAYER_DISPLAY_NAMES = {
+  radar: 'Precip',
+  satellite: 'Satellite',
+  clouds: 'Clouds',
+  temp: 'Temperature'
+};
+
+function normalizeLayerType(layerType) {
+  if (!layerType) return 'radar';
+  const key = String(layerType).toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(LAYER_ALIASES, key)) {
+    return LAYER_ALIASES[key];
+  }
+  return VALID_LAYER_TYPES.includes(key) ? key : 'radar';
+}
+
+function getLayerDisplayName(layerType) {
+  const normalized = normalizeLayerType(layerType);
+  return LAYER_DISPLAY_NAMES[normalized] || (normalized.charAt(0).toUpperCase() + normalized.slice(1));
+}
+
+/**
+ * Initializes the Leaflet map, adds a tile layer from OpenStreetMap,
+ * and sets up the initial static radar layer and location marker.
+ */
+function initMap() {
+  map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: 'Map data © OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Static fallback radar (NEXRAD via Iowa State Mesonet)
+  radarLayer = L.tileLayer(
+    'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
+    { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
+  ).addTo(map);
+
+  marker = L.circleMarker([LAT, LON], {
+    radius: 6,
+    color: '#0ea5e9',
+    fillColor: '#38bdf8',
+    fillOpacity: 0.95,
+    weight: 2
+  }).addTo(map).bindPopup('Loading location…');
+}
+
+/**
+ * Gets the static layer URL based on layer type
+ */
+function getStaticLayerUrl(layerType) {
+  const normalized = normalizeLayerType(layerType);
+  const urls = {
+    radar: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
+    satellite: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-VIS-0/{z}/{x}/{y}.png',
+    clouds: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png',
+    temp: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::GOES-CONUS-13-0/{z}/{x}/{y}.png'
+  };
+  return urls[normalized] || urls.radar;
+}
+
+/**
+ * Gets attribution text for the current layer
+ */
+function getLayerAttribution(layerType) {
+  const normalized = normalizeLayerType(layerType);
+  const attrs = {
+    radar: 'Animated: RainViewer - Static: NEXRAD (Iowa State Mesonet)',
+    satellite: 'Animated: RainViewer Satellite - Static: GOES Visible (Iowa State Mesonet)',
+    clouds: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)',
+    temp: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)'
+  };
+  return attrs[normalized] || attrs.radar;
+}
+
+// --- RainViewer animated radar (frames + controls) ---
+let rainFrames = [];
+let satelliteFrames = [];
+let rainLayer = null;
+let frameIndex = 0;
+let animTimer = null;
+let isPlaying = false;
+let currentMode = 'auto'; // auto | animated | static | off
+
+// Heuristic performance cap for frames
+const DEVICE_MEM = navigator.deviceMemory || 4;
+const IS_MOBILE = /Mobi|Android/i.test(navigator.userAgent);
+const RECOMMENDED_MAX_FRAMES = Math.min(60, IS_MOBILE ? 24 : (DEVICE_MEM >= 8 ? 48 : DEVICE_MEM >= 4 ? 36 : 24));
+let MAX_FRAMES = RECOMMENDED_MAX_FRAMES;
+let FRAME_INTERVAL = 450; // ms
+let LAYER_OPACITY = 0.6;
+let TILE_SIZE = 256;
+
 /**
  * Constructs the URL for a RainViewer tile based on the frame path provided by the API.
  * @param {Object} frame - The frame object containing the base path.
@@ -222,7 +355,6 @@ function setResolution(size){
  */
 async function initRadarAnimation(){
   try {
-    // UPDATED to modern V2 RainViewer endpoint
     const radarRes = await fetch('https://api.rainviewer.com/public/weather-maps.json');
     if (!radarRes.ok) {
       console.error('RainViewer API returned non-OK', radarRes.status);
@@ -231,7 +363,7 @@ async function initRadarAnimation(){
     }
     
     const data = await radarRes.json();
-    const host = data.host; // Host is dynamically provided by the API
+    const host = data.host; 
     
     // Parse Radar Frames
     if (data.radar) {
@@ -240,7 +372,7 @@ async function initRadarAnimation(){
       
       rainFrames = past.concat(nowc).map(f => ({
         time: f.time,
-        path: host + f.path // Pre-construct the full base path
+        path: host + f.path
       }));
       
       rainFrames.sort((a, b) => a.time - b.time);
@@ -252,7 +384,7 @@ async function initRadarAnimation(){
     if (data.satellite && data.satellite.infrared) {
       satelliteFrames = data.satellite.infrared.map(f => ({
         time: f.time,
-        path: host + f.path // Pre-construct the full base path
+        path: host + f.path
       }));
       
       satelliteFrames.sort((a, b) => a.time - b.time);
@@ -297,7 +429,7 @@ async function initRadarAnimation(){
   }
 }
 
-// --- UI wire-up for layer controls (Completed) ---
+// --- UI wire-up for layer controls ---
 document.getElementById('layerSelect')?.addEventListener('change', (e) => {
   setLayerType(e.target.value);
 });
@@ -346,3 +478,13 @@ document.getElementById('modeSelect')?.addEventListener('change', (e) => {
 document.getElementById('resSelect')?.addEventListener('change', (e) => {
   setResolution(parseInt(e.target.value, 10) || 256);
 });
+
+// --- Optional: Global initialization if missing from your HTML file ---
+// (Uncomment this block if your page isn't calling initMap() and initRadarAnimation() automatically)
+/*
+document.addEventListener('DOMContentLoaded', async () => {
+  await determineLocation();
+  initMap();
+  initRadarAnimation();
+});
+*/
