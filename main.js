@@ -1,56 +1,34 @@
 // --- Location (default Rockwell, NC; overridden by geolocation) ---
-let LAT = 35.551;   // Rockwell, NC approx
+let LAT = 35.551;   
 let LON = -80.407;
 
-/**
- * Attempts to get the user's current location using the browser's geolocation API.
- * If successful, it updates the global LAT and LON variables.
- * If it fails or the API is unavailable, it does nothing and the default location is used.
- * @returns {Promise<void>} A promise that resolves when the location has been determined.
- */
 async function determineLocation() {
   if (!('geolocation' in navigator)) return;
   try {
     const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject));
     LAT = pos.coords.latitude;
     LON = pos.coords.longitude;
+    document.getElementById('location').textContent = "Current Location";
   } catch (err) {
-    console.warn('Geolocation failed', err);
+    console.warn('Geolocation failed, using default', err);
+    document.getElementById('location').textContent = "Rockwell, NC";
   }
 }
 
+// ==========================================
+// MAP & RADAR LOGIC
+// ==========================================
 let map, marker, radarLayer;
-let currentLayerType = 'radar'; // radar | satellite | clouds | temp
+let currentLayerType = 'radar';
 
 const VALID_LAYER_TYPES = ['radar', 'satellite', 'clouds', 'temp'];
-const LAYER_ALIASES = {
-  radar: 'radar',
-  precip: 'radar',
-  precipitation: 'radar',
-  rain: 'radar',
-  satellite: 'satellite',
-  visible: 'satellite',
-  vis: 'satellite',
-  clouds: 'clouds',
-  cloud: 'clouds',
-  ir: 'clouds',
-  infrared: 'clouds',
-  temp: 'temp',
-  temperature: 'temp'
-};
-const LAYER_DISPLAY_NAMES = {
-  radar: 'Precip',
-  satellite: 'Satellite',
-  clouds: 'Clouds',
-  temp: 'Temperature'
-};
+const LAYER_ALIASES = { radar: 'radar', precip: 'radar', precipitation: 'radar', rain: 'radar', satellite: 'satellite', visible: 'satellite', vis: 'satellite', clouds: 'clouds', cloud: 'clouds', ir: 'clouds', infrared: 'clouds', temp: 'temp', temperature: 'temp' };
+const LAYER_DISPLAY_NAMES = { radar: 'Precip', satellite: 'Satellite', clouds: 'Clouds', temp: 'Temperature' };
 
 function normalizeLayerType(layerType) {
   if (!layerType) return 'radar';
   const key = String(layerType).toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(LAYER_ALIASES, key)) {
-    return LAYER_ALIASES[key];
-  }
+  if (Object.prototype.hasOwnProperty.call(LAYER_ALIASES, key)) return LAYER_ALIASES[key];
   return VALID_LAYER_TYPES.includes(key) ? key : 'radar';
 }
 
@@ -59,35 +37,23 @@ function getLayerDisplayName(layerType) {
   return LAYER_DISPLAY_NAMES[normalized] || (normalized.charAt(0).toUpperCase() + normalized.slice(1));
 }
 
-/**
- * Initializes the Leaflet map, adds a tile layer from OpenStreetMap,
- * and sets up the initial static radar layer and location marker.
- */
 function initMap() {
   map = L.map('radar', { zoomControl: true, attributionControl: true }).setView([LAT, LON], 9);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18,
-    attribution: 'Map data © OpenStreetMap contributors'
+    attribution: 'Map data © OpenStreetMap'
   }).addTo(map);
 
-  // Static fallback radar (NEXRAD via Iowa State Mesonet)
   radarLayer = L.tileLayer(
     'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png',
-    { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet / NWS NEXRAD' }
+    { opacity: 0.6, zIndex: 500, attribution: 'Radar © Iowa State Mesonet' }
   ).addTo(map);
 
   marker = L.circleMarker([LAT, LON], {
-    radius: 6,
-    color: '#0ea5e9',
-    fillColor: '#38bdf8',
-    fillOpacity: 0.95,
-    weight: 2
-  }).addTo(map).bindPopup('Loading location…');
+    radius: 6, color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.95, weight: 2
+  }).addTo(map).bindPopup('Forecast Location');
 }
 
-/**
- * Gets the static layer URL based on layer type
- */
 function getStaticLayerUrl(layerType) {
   const normalized = normalizeLayerType(layerType);
   const urls = {
@@ -99,103 +65,42 @@ function getStaticLayerUrl(layerType) {
   return urls[normalized] || urls.radar;
 }
 
-/**
- * Gets attribution text for the current layer
- */
 function getLayerAttribution(layerType) {
   const normalized = normalizeLayerType(layerType);
   const attrs = {
-    radar: 'Animated: RainViewer - Static: NEXRAD (Iowa State Mesonet)',
-    satellite: 'Animated: RainViewer Satellite - Static: GOES Visible (Iowa State Mesonet)',
-    clouds: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)',
-    temp: 'Animated: RainViewer Infrared - Static: GOES IR (Iowa State Mesonet)'
+    radar: 'Animated: RainViewer - Static: NEXRAD',
+    satellite: 'Animated: RainViewer Satellite - Static: GOES Visible',
+    clouds: 'Animated: RainViewer Infrared - Static: GOES IR',
+    temp: 'Animated: RainViewer Infrared - Static: GOES IR'
   };
   return attrs[normalized] || attrs.radar;
 }
 
-// --- RainViewer animated radar (frames + controls) ---
-let rainFrames = [];
-let satelliteFrames = [];
-let rainLayer = null;
-let frameIndex = 0;
-let animTimer = null;
-let isPlaying = false;
-let currentMode = 'auto'; // auto | animated | static | off
-
-// Heuristic performance cap for frames
+let rainFrames = [], satelliteFrames = [], rainLayer = null;
+let frameIndex = 0, animTimer = null, isPlaying = false, currentMode = 'auto';
 const DEVICE_MEM = navigator.deviceMemory || 4;
 const IS_MOBILE = /Mobi|Android/i.test(navigator.userAgent);
 const RECOMMENDED_MAX_FRAMES = Math.min(60, IS_MOBILE ? 24 : (DEVICE_MEM >= 8 ? 48 : DEVICE_MEM >= 4 ? 36 : 24));
 let MAX_FRAMES = RECOMMENDED_MAX_FRAMES;
-let FRAME_INTERVAL = 450; // ms
-let LAYER_OPACITY = 0.6;
-let TILE_SIZE = 256;
+let FRAME_INTERVAL = 450, LAYER_OPACITY = 0.6, TILE_SIZE = 256;
 
-/**
- * Constructs the URL for a RainViewer tile based on the frame path provided by the API.
- * @param {Object} frame - The frame object containing the base path.
- * @param {number} [size=TILE_SIZE] - The size of the tile (256 or 512).
- * @param {string} [layerType=currentLayerType] - The type of layer (radar, satellite, clouds, temp).
- * @returns {string} The URL for the tile.
- */
 function rvFrameUrl(frame, size = TILE_SIZE, layerType = currentLayerType){
   const normalized = normalizeLayerType(layerType);
   if (!frame || !frame.path) return '';
-
-  if (normalized === 'radar') {
-    // 2 = color scheme, 1_1 = smoothing and snow mask
-    return `${frame.path}/${size}/{z}/{x}/{y}/2/1_1.png`;
-  }
-  if (normalized === 'satellite') {
-    // Visible satellite
-    return `${frame.path}/${size}/{z}/{x}/{y}/0/0_0.png`;
-  }
-  // Infrared (clouds & temp)
+  if (normalized === 'radar') return `${frame.path}/${size}/{z}/{x}/{y}/2/1_1.png`;
+  if (normalized === 'satellite') return `${frame.path}/${size}/{z}/{x}/{y}/0/0_0.png`;
   return `${frame.path}/${size}/{z}/{x}/{y}/0/0_1.png`;
 }
 
-/**
- * Ensures the RainViewer layer is created and returns it.
- */
-function ensureRainLayer(){
-  if (!rainLayer) {
-    const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-    if (!frames || !frames.length) return null;
-    
-    const frame = frames[frameIndex];
-    if (!frame || !frame.path) return null;
-
-    const opts = { 
-      opacity: LAYER_OPACITY, 
-      zIndex: 550,
-      tms: false,
-      attribution: ''
-    };
-    if (TILE_SIZE === 512) {
-      opts.tileSize = 512;
-      opts.zoomOffset = -1;
-    }
-    rainLayer = L.tileLayer(rvFrameUrl(frame, TILE_SIZE, currentLayerType), opts);
-  }
-  return rainLayer;
-}
-
-/**
- * Sets the opacity for both the static and animated layers.
- */
 function setRadarOpacity(v){
   LAYER_OPACITY = v;
   if (radarLayer) radarLayer.setOpacity(v);
   if (rainLayer) rainLayer.setOpacity(v);
 }
 
-/**
- * Changes the layer type (radar, satellite, clouds, temp)
- */
 function setLayerType(layerType) {
   const wasPlaying = isPlaying;
   if (wasPlaying) pause();
-
   const normalized = normalizeLayerType(layerType);
   currentLayerType = normalized;
 
@@ -205,52 +110,25 @@ function setLayerType(layerType) {
   if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
   if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
 
-  const attrText = getLayerAttribution(normalized);
-  radarLayer = L.tileLayer(getStaticLayerUrl(normalized), {
-    opacity: LAYER_OPACITY,
-    zIndex: 500,
-    attribution: attrText
-  });
+  radarLayer = L.tileLayer(getStaticLayerUrl(normalized), { opacity: LAYER_OPACITY, zIndex: 500 }).addTo(map);
 
   const frames = normalized === 'radar' ? rainFrames : satelliteFrames;
   if (frames && frames.length > 0) {
     rainLayer = null;
     frameIndex = frames.length - 1;
-    const slider = document.getElementById('frameSlider');
-    if (slider) {
-      slider.max = String(frames.length - 1);
-      slider.value = String(frameIndex);
-      slider.disabled = false;
-    }
     showFrame(frameIndex);
   } else {
-    const slider = document.getElementById('frameSlider');
-    const label = document.getElementById('frameTime');
-    if (slider) {
-      slider.value = '0';
-      slider.disabled = true;
-    }
-    if (label) label.textContent = '-';
-    if (currentMode === 'animated' || currentMode === 'auto') {
-      setMode('static');
-      return;
-    }
+    setMode('static');
   }
-
-  setMode(currentMode);
   if (wasPlaying) play();
 }
 
-/**
- * Displays a specific frame of the animated layer.
- */
 function showFrame(i){
   const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
   if (!frames || frames.length === 0) return;
   
   frameIndex = (i + frames.length) % frames.length;
   const frame = frames[frameIndex];
-  
   if (!frame || !frame.path) return;
   
   const tileUrl = rvFrameUrl(frame, TILE_SIZE, currentLayerType);
@@ -258,233 +136,155 @@ function showFrame(i){
   if (rainLayer && map.hasLayer(rainLayer)) {
     rainLayer.setUrl(tileUrl);
   } else {
-    const opts = { 
-      opacity: LAYER_OPACITY, 
-      zIndex: 550,
-      tms: false,
-      attribution: ''
-    };
-    if (TILE_SIZE === 512) {
-      opts.tileSize = 512;
-      opts.zoomOffset = -1;
-    }
-    rainLayer = L.tileLayer(tileUrl, opts);
+    rainLayer = L.tileLayer(tileUrl, { opacity: LAYER_OPACITY, zIndex: 550, tms: false });
     if (currentMode === 'animated' || currentMode === 'auto') rainLayer.addTo(map);
   }
   
   const slider = document.getElementById('frameSlider');
   const label = document.getElementById('frameTime');
   if (slider) slider.value = String(frameIndex);
-  if (label) {
-    label.textContent = frame.time ? new Date(frame.time * 1000).toLocaleString() : 'Time unavailable';
-  }
+  if (label) label.textContent = frame.time ? new Date(frame.time * 1000).toLocaleTimeString() : '-';
 }
 
-/**
- * Starts the layer animation.
- */
 function play(){
   const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
   if (animTimer || !frames.length) return;
-  isPlaying = true; updatePlayBtn();
+  isPlaying = true; document.getElementById('playBtn').textContent = 'Pause';
   animTimer = setInterval(() => showFrame(frameIndex + 1), FRAME_INTERVAL);
 }
 
-/**
- * Pauses the layer animation.
- */
 function pause(){
-  isPlaying = false; updatePlayBtn();
+  isPlaying = false; document.getElementById('playBtn').textContent = 'Play';
   if (animTimer) { clearInterval(animTimer); animTimer = null; }
 }
 
-/**
- * Updates the text of the play/pause button based on the current animation state.
- */
-function updatePlayBtn(){
-  const btn = document.getElementById('playBtn');
-  if (btn) btn.textContent = isPlaying ? 'Pause' : 'Play';
-}
-
-/**
- * Sets the display mode and updates the map layers accordingly.
- */
 function setMode(mode){
   currentMode = mode;
-  const layerName = getLayerDisplayName(currentLayerType);
   if (mode === 'off') {
-    if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
-    if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
-    document.getElementById('radarDiag').textContent = 'Layer off';
+    if (radarLayer) map.removeLayer(radarLayer);
+    if (rainLayer) map.removeLayer(rainLayer);
     return;
   }
   if (mode === 'static') {
-    if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+    if (rainLayer) map.removeLayer(rainLayer);
     if (radarLayer && !map.hasLayer(radarLayer)) radarLayer.addTo(map);
-    document.getElementById('radarDiag').textContent = `Static ${layerName} tiles`;
     return;
   }
-  if (radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
+  if (radarLayer) map.removeLayer(radarLayer);
   if (rainLayer && !map.hasLayer(rainLayer)) rainLayer.addTo(map);
-  const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-  document.getElementById('radarDiag').textContent = `Animated ${layerName} - ${frames.length} frames @ ${FRAME_INTERVAL}ms`;
 }
 
-/**
- * Sets the resolution of the tiles.
- */
-function setResolution(size){
-  const wasPlaying = isPlaying;
-  if (wasPlaying) pause();
-  TILE_SIZE = size;
-  FRAME_INTERVAL = size === 512 ? 650 : 450;
-  const speedSlider = document.getElementById('speedSlider');
-  if (speedSlider) {
-    speedSlider.value = String(FRAME_INTERVAL);
-    document.getElementById('speedLbl').textContent = FRAME_INTERVAL + ' ms';
-  }
-  if (rainLayer && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
-  rainLayer = null;
-  showFrame(frameIndex);
-  setMode(currentMode);
-  if (wasPlaying) play();
-}
-
-/**
- * Fetches frame data from the RainViewer V2 API.
- */
 async function initRadarAnimation(){
   try {
-    const radarRes = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-    if (!radarRes.ok) {
-      console.error('RainViewer API returned non-OK', radarRes.status);
-      setMode('static');
-      return;
-    }
-    
-    const data = await radarRes.json();
+    const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    const data = await res.json();
     const host = data.host; 
     
-    // Parse Radar Frames
     if (data.radar) {
       const past = Array.isArray(data.radar.past) ? data.radar.past : [];
       const nowc = Array.isArray(data.radar.nowcast) ? data.radar.nowcast : [];
-      
-      rainFrames = past.concat(nowc).map(f => ({
-        time: f.time,
-        path: host + f.path
-      }));
-      
-      rainFrames.sort((a, b) => a.time - b.time);
-      rainFrames = rainFrames.slice(-MAX_FRAMES);
-      console.log(`Loaded ${rainFrames.length} radar frames`);
+      rainFrames = past.concat(nowc).map(f => ({ time: f.time, path: host + f.path })).slice(-MAX_FRAMES);
     }
-
-    // Parse Satellite Frames
-    if (data.satellite && data.satellite.infrared) {
-      satelliteFrames = data.satellite.infrared.map(f => ({
-        time: f.time,
-        path: host + f.path
-      }));
-      
-      satelliteFrames.sort((a, b) => a.time - b.time);
-      satelliteFrames = satelliteFrames.slice(-MAX_FRAMES);
-      console.log(`Loaded ${satelliteFrames.length} satellite frames`);
-    } else {
-      satelliteFrames = [];
-    }
-
+    
     const slider = document.getElementById('frameSlider');
-    const frames = currentLayerType === 'radar' ? rainFrames : satelliteFrames;
-    const controls = document.getElementById('radarControls');
-    const diagEl = document.getElementById('radarDiag');
-    const hasFrames = Array.isArray(frames) && frames.length > 0;
-
-    if (hasFrames) {
-      if (slider) {
-        slider.max = String(frames.length - 1);
-        slider.disabled = false;
-      }
-      showFrame(frames.length - 1);
-      setMode(currentMode);
-      if (typeof radarLayer !== 'undefined' && map.hasLayer(radarLayer) && (currentMode === 'animated' || currentMode === 'auto')) {
-        map.removeLayer(radarLayer);
-      }
-      if (diagEl) diagEl.textContent = `Radar frames: ${rainFrames.length} | Satellite frames: ${satelliteFrames.length}`;
-      if (controls) controls.style.opacity = '1';
-    } else {
-      if (controls) controls.style.opacity = '0.6';
-      if (slider) {
-        slider.value = '0';
-        slider.disabled = true;
-      }
-      if (diagEl) diagEl.textContent = `RainViewer frames unavailable for ${getLayerDisplayName(currentLayerType)}; showing static layer.`;
-      setMode('static');
+    if (rainFrames.length > 0 && slider) {
+      slider.max = String(rainFrames.length - 1);
+      slider.disabled = false;
+      showFrame(rainFrames.length - 1);
     }
   } catch (e) {
     console.error('RainViewer init failed', e);
-    const diag = document.getElementById('radarDiag');
-    if (diag) diag.textContent = `RainViewer init failed: ${e.message}`;
-    setMode('static');
   }
 }
 
-// --- UI wire-up for layer controls ---
-document.getElementById('layerSelect')?.addEventListener('change', (e) => {
-  setLayerType(e.target.value);
-});
+// ==========================================
+// NWS WEATHER DATA LOGIC (NEW)
+// ==========================================
+async function fetchWeatherData() {
+  try {
+    document.getElementById('lastUpdated').textContent = "Fetching data...";
+    // NWS requires a User-Agent header
+    const headers = { 'User-Agent': '(github.com/drummer475-94/rockwell-nws, contact@github.com)' };
+    
+    // 1. Get Grid Points from Lat/Lon
+    const pointRes = await fetch(`https://api.weather.gov/points/${LAT},${LON}`, { headers });
+    if (!pointRes.ok) throw new Error("Failed to fetch NWS grid");
+    const pointData = await pointRes.json();
+    
+    const forecastUrl = pointData.properties.forecast;
+    const hourlyUrl = pointData.properties.forecastHourly;
 
-document.getElementById('playBtn')?.addEventListener('click', () => {
-  if (isPlaying) pause(); else play();
-});
+    // 2. Fetch Daily and Hourly forecasts simultaneously
+    const [dailyRes, hourlyRes] = await Promise.all([
+      fetch(forecastUrl, { headers }),
+      fetch(hourlyUrl, { headers })
+    ]);
 
-document.getElementById('frameSlider')?.addEventListener('input', (e) => {
-  pause();
-  const v = parseInt(e.target.value, 10) || 0;
-  showFrame(v);
-});
+    const dailyData = await dailyRes.json();
+    const hourlyData = await hourlyRes.json();
 
-document.getElementById('maxFrames')?.addEventListener('input', (e) => {
-  const v = Math.max(6, Math.min(60, parseInt(e.target.value, 10) || RECOMMENDED_MAX_FRAMES));
-  MAX_FRAMES = v;
-  const lbl = document.getElementById('maxFramesLbl');
-  if(lbl) lbl.textContent = String(v);
-});
-
-document.getElementById('maxFrames')?.addEventListener('change', () => {
-  pause();
-  initRadarAnimation();
-});
-
-document.getElementById('opacSlider')?.addEventListener('input', (e) => {
-  const v = parseFloat(e.target.value) || 0.6;
-  setRadarOpacity(v);
-});
-
-document.getElementById('speedSlider')?.addEventListener('input', (e) => {
-  FRAME_INTERVAL = parseInt(e.target.value, 10) || 450;
-  const speedLbl = document.getElementById('speedLbl');
-  if (speedLbl) speedLbl.textContent = FRAME_INTERVAL + ' ms';
-  if (isPlaying) {
-    pause();
-    play();
+    updateWeatherUI(dailyData.properties.periods, hourlyData.properties.periods);
+  } catch (err) {
+    console.error('NWS Fetch Error:', err);
+    document.getElementById('lastUpdated').textContent = "Error loading weather data.";
   }
-});
+}
 
-document.getElementById('modeSelect')?.addEventListener('change', (e) => {
-  setMode(e.target.value);
-});
+function updateWeatherUI(daily, hourly) {
+  // Update Right Now KPI Cards
+  if (hourly && hourly.length > 0) {
+    const current = hourly[0];
+    document.getElementById('nowTemp').textContent = `${current.temperature}°${current.temperatureUnit}`;
+    document.getElementById('windNow').textContent = current.windSpeed;
+    document.getElementById('pop1').textContent = current.probabilityOfPrecipitation?.value ? `${current.probabilityOfPrecipitation.value}%` : '0%';
+    document.getElementById('humidityNow').textContent = current.relativeHumidity?.value ? `${Math.round(current.relativeHumidity.value)}%` : '-';
+    
+    // Populate Hourly Scroller
+    const hourlyHtml = hourly.slice(0, 12).map(h => `
+      <div class="hourCard">
+        <div class="top">
+          <span class="muted">${new Date(h.startTime).toLocaleTimeString([], {hour: '2-digit'})}</span>
+        </div>
+        <div class="temp" style="margin: 8px 0;">${h.temperature}°</div>
+        <div class="muted" style="font-size:11px;">${h.shortForecast}</div>
+      </div>
+    `).join('');
+    document.getElementById('hourly').innerHTML = hourlyHtml;
+    document.getElementById('hourly').classList.remove('loading');
+  }
 
-document.getElementById('resSelect')?.addEventListener('change', (e) => {
-  setResolution(parseInt(e.target.value, 10) || 256);
-});
+  // Update Daily Cards
+  if (daily && daily.length > 0) {
+    const dailyHtml = daily.slice(0, 7).map(d => `
+      <div class="dayCard">
+        <div class="top" style="margin-bottom: 4px;">
+          <strong>${d.name}</strong>
+          <span class="temp" style="font-size: 18px;">${d.temperature}°</span>
+        </div>
+        <div class="muted">${d.detailedForecast}</div>
+      </div>
+    `).join('');
+    document.getElementById('daily').innerHTML = dailyHtml;
+    document.getElementById('daily').classList.remove('loading');
+  }
 
-// --- Optional: Global initialization if missing from your HTML file ---
-// (Uncomment this block if your page isn't calling initMap() and initRadarAnimation() automatically)
-/*
+  document.getElementById('lastUpdated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+}
+
+// ==========================================
+// EVENT LISTENERS & INIT
+// ==========================================
+document.getElementById('layerSelect')?.addEventListener('change', (e) => setLayerType(e.target.value));
+document.getElementById('playBtn')?.addEventListener('click', () => { if (isPlaying) pause(); else play(); });
+document.getElementById('frameSlider')?.addEventListener('input', (e) => { pause(); showFrame(parseInt(e.target.value, 10)); });
+document.getElementById('modeSelect')?.addEventListener('change', (e) => setMode(e.target.value));
+document.getElementById('opacSlider')?.addEventListener('input', (e) => setRadarOpacity(parseFloat(e.target.value)));
+document.getElementById('refreshBtn')?.addEventListener('click', () => fetchWeatherData());
+
+// Initialize App
 document.addEventListener('DOMContentLoaded', async () => {
   await determineLocation();
   initMap();
   initRadarAnimation();
+  fetchWeatherData();
 });
-*/
